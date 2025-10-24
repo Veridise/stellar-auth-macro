@@ -1,6 +1,6 @@
 # Description
 
-A tiny Rust proc-macro crate that enforces explicit, opt-in public APIs. Attach #[access_control] to an *impl* (or an inline mod) and every public function inside must be explicitly marked with #[no_access_control]. This repo also includes a minimal Soroban contract and tests demonstrating the macro in action.
+A Rust proc-macro crate that enforces explicit, opt-in public APIs. Attach #[access_control] to an *impl* (or an inline mod) and every public function inside must be explicitly marked with #[no_access_control]. This repo also includes a minimal Soroban contract and tests demonstrating the macro in action.
 
 ## Installation
 
@@ -14,7 +14,7 @@ To build and develop contracts you need only a couple prerequisites:
 - An editor that supports Rust
 - [Stellar CLI](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup#install-the-stellar-cli)
 
-See the [documentation](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup) for more prerequisites installation instructions.
+See the [documentation](https://developers.stellar.org/docs/build/smart-contracts/getting-started/setup) for more prerequisite installation instructions.
 
 ## Build
 
@@ -22,4 +22,4 @@ The stellar contracts can be built with ```make build```.
 
 ## Testing
 
-The repository also contains some tests which can be run with ```make test```.
+The repository also contains some tests which demonstrate the macros in action. These can be run with ```make test```.

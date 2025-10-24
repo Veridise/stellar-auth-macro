@@ -86,6 +86,8 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         // External module file; we can't inspect inside. Leave it unchanged.
+        // @todo Throw an error. Since we can't inspect it, we ideally want to enforce that the macro
+        // can’t be used on these types of modules
         return item;
     }
 

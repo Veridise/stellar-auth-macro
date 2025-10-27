@@ -6,20 +6,22 @@
 //!     Marker attribute (no-op) to indicate the fn is allowed.
 //! - #[authorized_by(arg_ident, check_fn_or_path)] on a function:
 //!     Injects an authorization guard at the top of the function:
-//!       * (Self::)check_fn(arg) must be true
+//!       * (Self::)check_fn(&env, &arg) must be true
 //!       * arg.require_auth()
 
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use proc_macro2::Span;
-use quote::{quote, quote_spanned, ToTokens};
+use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
     spanned::Spanned,
     Attribute, FnArg, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, ItemMod, Pat, Path, Token,
     Visibility,
 };
+
+use proc_macro_error::{abort, abort_if_dirty, emit_error, proc_macro_error};
 
 /// Returns true if the attribute list contains either `no_access_control` or `authorized_by`.
 fn has_access_attr(attrs: &[Attribute]) -> bool {
@@ -30,6 +32,7 @@ fn has_access_attr(attrs: &[Attribute]) -> bool {
 }
 
 /// Marker attribute for functions that are allowed (no-op).
+#[proc_macro_error]
 #[proc_macro_attribute]
 pub fn no_access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
@@ -50,41 +53,6 @@ impl Parse for AuthorizedArgs {
     }
 }
 
-/// Injects an authorization guard at the top of the function body:
-///   if !(call_path(arg)) { panic!(...); }
-///   arg.require_auth();
-#[proc_macro_attribute]
-pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = match syn::parse::<AuthorizedArgs>(attr) {
-        Ok(a) => a,
-        Err(e) => return e.to_compile_error().into(),
-    };
-
-    // Case 1: method inside an `impl`
-    if let Ok(mut m) = syn::parse::<ImplItemFn>(item.clone()) {
-        match inject_guard_into_impl_fn(&mut m, &args) {
-            Ok(()) => return TokenStream::from(quote! { #m }),
-            Err(e) => return e.to_compile_error().into(),
-        }
-    }
-
-    // Case 2: free function (e.g., inside an inline `mod`)
-    if let Ok(mut f) = syn::parse::<ItemFn>(item.clone()) {
-        match inject_guard_into_item_fn(&mut f, &args) {
-            Ok(()) => return TokenStream::from(quote! { #f }),
-            Err(e) => return e.to_compile_error().into(),
-        }
-    }
-
-    // Wrong placement
-    syn::Error::new(
-        Span::call_site(),
-        "#[authorized_by] must be placed on a function or an `impl` method.",
-    )
-    .to_compile_error()
-    .into()
-}
-
 fn param_exists(sig: &syn::Signature, want: &syn::Ident) -> bool {
     sig.inputs.iter().any(|arg| match arg {
         FnArg::Typed(pat_ty) => matches!(&*pat_ty.pat, Pat::Ident(p) if p.ident == *want),
@@ -92,11 +60,10 @@ fn param_exists(sig: &syn::Signature, want: &syn::Ident) -> bool {
     })
 }
 
-// add near your other helpers
 fn find_param_ident(sig: &syn::Signature, name: &str) -> Option<syn::Ident> {
     for arg in &sig.inputs {
-        if let syn::FnArg::Typed(pat_ty) = arg {
-            if let syn::Pat::Ident(pat) = &*pat_ty.pat {
+        if let FnArg::Typed(pat_ty) = arg {
+            if let Pat::Ident(pat) = &*pat_ty.pat {
                 if pat.ident == name {
                     return Some(pat.ident.clone());
                 }
@@ -106,151 +73,167 @@ fn find_param_ident(sig: &syn::Signature, name: &str) -> Option<syn::Ident> {
     None
 }
 
-fn inject_guard_into_impl_fn(m: &mut ImplItemFn, args: &AuthorizedArgs) -> syn::Result<()> {
-    if !param_exists(&m.sig, &args.arg) {
-        return Err(syn::Error::new(
-            args.arg.span(),
-            format!(
+/// Injects an authorization guard at the top of the function body:
+///   if !(call_path(&env, &arg)) { panic!(...); }
+///   arg.require_auth();
+#[proc_macro_error]
+#[proc_macro_attribute]
+pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = match syn::parse::<AuthorizedArgs>(attr) {
+        Ok(a) => a,
+        Err(e) => abort!(e.span(), "{}", e),
+    };
+
+    // Case 1: method inside an `impl`
+    if let Ok(mut m) = syn::parse::<ImplItemFn>(item.clone()) {
+        if !param_exists(&m.sig, &args.arg) {
+            emit_error!(
+                args.arg.span(),
                 "#[authorized_by] references parameter `{}` that does not exist",
                 args.arg
+            );
+            abort_if_dirty(); // // if any emit_error! happened above, stop here
+        }
+
+        let env_ident = match find_param_ident(&m.sig, "env") {
+            Some(id) => id,
+            None => abort!(
+                m.sig.span(),
+                "#[authorized_by] needs a parameter named `env` (first argument of your method)"
             ),
-        ));
+        };
+
+        // If the check path is a single ident, call as `Self::ident`; otherwise use the full path.
+        let call_path = if args.check_fn.segments.len() == 1 {
+            let ident = &args.check_fn.segments[0].ident;
+            quote! { Self::#ident }
+        } else {
+            let p = &args.check_fn;
+            quote! { #p }
+        };
+
+        let arg = &args.arg;
+        let body = &m.block;
+
+        m.block = syn::parse_quote_spanned! { m.sig.span()=>
+            {
+                if !(#call_path(&#env_ident, &#arg)) {
+                    ::core::panic!(concat!(
+                        "unauthorized: ",
+                        stringify!(#call_path),
+                        "(env,",
+                        stringify!(#arg),
+                        ") failed"
+                    ));
+                }
+                #arg.require_auth();
+                #body
+            }
+        };
+
+        return TokenStream::from(quote!(#m));
     }
 
-    // If the check path is a single ident, call as `Self::ident`; otherwise use the full path.
-    let call_path = if args.check_fn.segments.len() == 1 {
-        let ident = &args.check_fn.segments[0].ident;
-        quote! { Self::#ident }
-    } else {
-        let p = &args.check_fn;
-        quote! { #p }
-    };
-
-    let arg = &args.arg;
-    let body = &m.block;
-
-    // Inject Soroban-style guards:
-    //   if !(call_path(arg)) { panic!("..."); }
-    //   arg.require_auth();
-    let env_ident = find_param_ident(&m.sig, "env").ok_or_else(|| {
-        syn::Error::new(m.sig.span(), "#[authorized_by] needs a parameter named `env`")
-    })?;
-
-    m.block = syn::parse_quote_spanned! { m.sig.span()=>
-        {
-            if !(#call_path(&#env_ident, &#arg)) {
-                ::core::panic!(concat!("unauthorized: ", stringify!(#call_path), "(env,", stringify!(#arg), ") failed"));
-            }
-            #arg.require_auth();
-            #body
-        }
-    };
-    Ok(())
-}
-
-fn inject_guard_into_item_fn(f: &mut ItemFn, args: &AuthorizedArgs) -> syn::Result<()> {
-    if !param_exists(&f.sig, &args.arg) {
-        return Err(syn::Error::new(
-            args.arg.span(),
-            format!(
+    // Case 2: free function (e.g., inside an inline `mod`)
+    if let Ok(mut f) = syn::parse::<ItemFn>(item.clone()) {
+        if !param_exists(&f.sig, &args.arg) {
+            emit_error!(
+                args.arg.span(),
                 "#[authorized_by] references parameter `{}` that does not exist",
                 args.arg
+            );
+            abort_if_dirty(); // ← function call
+        }
+
+        let env_ident = match find_param_ident(&f.sig, "env") {
+            Some(id) => id,
+            None => abort!(
+                f.sig.span(),
+                "#[authorized_by] needs a parameter named `env` (first argument of your function)"
             ),
-        ));
+        };
+
+        let call_path = &args.check_fn; // free function: use as-is
+        let arg = &args.arg;
+        let body = &f.block;
+
+        f.block = syn::parse_quote_spanned! { f.sig.span()=>
+            {
+                if !(#call_path(&#env_ident, &#arg)) {
+                    ::core::panic!(concat!(
+                        "unauthorized: ",
+                        stringify!(#call_path),
+                        "(env,",
+                        stringify!(#arg),
+                        ") failed"
+                    ));
+                }
+                #arg.require_auth();
+                #body
+            }
+        };
+
+        return TokenStream::from(quote!(#f));
     }
 
-    let call_path = &args.check_fn; // free function: use as-is
-    let arg = &args.arg;
-    let body = &f.block;
-
-    let env_ident = find_param_ident(&f.sig, "env").ok_or_else(|| {
-        syn::Error::new(f.sig.span(), "#[authorized_by] needs a parameter named `env`")
-    })?;
-
-    f.block = syn::parse_quote_spanned! { f.sig.span()=>
-        {
-            if !(#call_path(&#env_ident, &#arg)) {
-                ::core::panic!(concat!("unauthorized: ", stringify!(#call_path), "(env,", stringify!(#arg), ") failed"));
-            }
-            #arg.require_auth();
-            #body
-        }
-    };
-    Ok(())
+    // Wrong placement
+    abort!(
+        Span::call_site(),
+        "#[authorized_by] must be placed on a function or an `impl` method."
+    );
 }
 
 /// Place on an `impl` block (or inline `mod`). Errors if any public `fn`
 /// lacks #[no_access_control] or #[authorized_by(...)].
+#[proc_macro_error]
 #[proc_macro_attribute]
 pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Try `impl` first
     if let Ok(impl_block) = syn::parse::<ItemImpl>(item.clone()) {
-        let mut errors = Vec::new();
-
         for it in &impl_block.items {
             if let ImplItem::Fn(m) = it {
                 // Consider anything not-private as requiring the marker:
                 // (pub, pub(crate), pub(super), pub(in ...))
                 let is_publicish = !matches!(m.vis, Visibility::Inherited);
                 if is_publicish && !has_access_attr(&m.attrs) {
-                    let name = &m.sig.ident;
-                    errors.push(quote_spanned! { m.sig.ident.span()=>
-                        compile_error!(concat!(
-                            "public method ",
-                            stringify!(#name),
-                            " is missing #[no_access_control] or #[authorized_by(...)]"
-                        ));
-                    });
+                    emit_error!(
+                        m.sig.ident.span(),
+                        "public method {} is missing #[no_access_control] or #[authorized_by(...)]",
+                        m.sig.ident
+                    );
                 }
             }
         }
-
-        if errors.is_empty() {
-            // No problems: return the original item
-            return item;
-        } else {
-            // Emit compile errors + original item for context
-            let orig = impl_block.into_token_stream();
-            return TokenStream::from(quote! { #(#errors)* #orig });
-        }
+        abort_if_dirty(); // ← function call
+        return item;
     }
 
     // Also support inline modules: `#[access_control] mod m { pub fn ... }`
     if let Ok(module) = syn::parse::<ItemMod>(item.clone()) {
         if let Some((_, items)) = &module.content {
-            let mut errors = Vec::new();
-
             for it in items {
                 if let Item::Fn(f) = it {
                     let is_publicish = !matches!(f.vis, Visibility::Inherited);
                     if is_publicish && !has_access_attr(&f.attrs) {
-                        let name = &f.sig.ident;
-                        errors.push(quote_spanned! { f.sig.ident.span()=>
-                            compile_error!(concat!(
-                                "public function ",
-                                stringify!(#name),
-                                " is missing #[no_access_control] or #[authorized_by(...)]"
-                            ));
-                        });
+                        emit_error!(
+                            f.sig.ident.span(),
+                            "public function {} is missing #[no_access_control] or #[authorized_by(...)]",
+                            f.sig.ident
+                        );
                     }
                 }
             }
-
-            if errors.is_empty() {
-                return item;
-            } else {
-                let orig = module.into_token_stream();
-                return TokenStream::from(quote! { #(#errors)* #orig });
-            }
+            abort_if_dirty(); // ← function call
+            return item;
         }
 
-        // External module file; we can't inspect inside. Leave it unchanged.
-        // @todo Consider erroring to prevent a false sense of safety.
+        // External module file; leave unchanged (or emit a policy error if you prefer).
         return item;
     }
 
     // Wrong placement
-    TokenStream::from(quote! {
-        compile_error!("#[access_control] must be placed on an `impl` block or an inline `mod`.");
-    })
+    abort!(
+        Span::call_site(),
+        "#[access_control] must be placed on an `impl` block or an inline `mod`."
+    );
 }

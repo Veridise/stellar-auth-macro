@@ -1,62 +1,50 @@
-//! This is a simple contract that demonstrates how to implement authorization using
-//! Soroban-managed auth framework for a simple case (a single user that needs
-//! to authorize a single contract invocation).
 #![no_std]
-
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
-
-// ⬇️ bring in the macros
-use access_control_macros::{access_control, no_access_control};
+use access_control_macros::{access_control, no_access_control, authorized_by};
 
 #[contracttype]
 pub enum DataKey {
     Counter(Address),
+    Owner, // <— add this
 }
 
 #[contract]
 pub struct IncrementContract;
 
 #[contractimpl]
-#[access_control] // Enforce that all pub fns below must have #[no_access_control]
+#[access_control]
 impl IncrementContract {
-    /// Increment increments a counter for the user, and returns the value.
-    #[no_access_control] // Explicitly allow this exported method
+    #[no_access_control]
     pub fn increment(env: Env, user: Address, value: u32) -> u32 {
-        // Requires `user` to have authorized call of the `increment` of this
-        // contract with all the arguments passed to `increment`, i.e. `user`
-        // and `value`. This will panic if auth fails for any reason.
-        // When this is called, Soroban host performs the necessary
-        // authentication, manages replay prevention and enforces the user's
-        // authorization policies.
         user.require_auth();
-
-        // This call is equilvalent to the above:
-        // user.require_auth_for_args((&user, value).into_val(&env));
-
-        // Construct a key for the data being stored. Use an enum to set the
-        // contract up well for adding other types of data to be stored.
         let key = DataKey::Counter(user.clone());
-
-        // Get the current count for the invoker.
         let mut count: u32 = env.storage().persistent().get(&key).unwrap_or_default();
-
-        // Increment the count.
         count += value;
-
-        // Save the count.
         env.storage().persistent().set(&key, &count);
-
-        // Return the count to the caller.
         count
     }
 
-    // --- Uncomment to see the macro error -----------------------------------
-    // Missing #[no_access_control] on a public fn will FAIL compilation:
-    #[no_access_control] // Explicitly allow this exported method
-    pub fn missing_marker(_env: Env) {
-        // ...
+    // Helper to set the expected owner (used by tests)
+    #[no_access_control]
+    pub fn set_owner(env: Env, owner: Address) {
+        env.storage().persistent().set(&DataKey::Owner, &owner);
     }
-    // ------------------------------------------------------------------------
+
+    /// Uses the macro guard: Self::is_permitted(&env, &user) + user.require_auth()
+    #[authorized_by(user, is_permitted)]
+    pub fn increment_guarded(env: Env, user: Address, value: u32) -> u32 {
+        let key = DataKey::Counter(user.clone());
+        let mut count: u32 = env.storage().persistent().get(&key).unwrap_or_default();
+        count += value;
+        env.storage().persistent().set(&key, &count);
+        count
+    }
+
+    // Predicate used by #[authorized_by(...)]
+    fn is_permitted(env: &Env, user: &Address) -> bool {
+        let stored: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
+        matches!(stored, Some(ref owner) if owner == user)
+    }
 }
 
 mod test;

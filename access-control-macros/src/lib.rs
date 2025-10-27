@@ -227,9 +227,14 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
             return item;
         }
 
-        // @todo @question Should an external module trigger an error??
-        // External module file; leave unchanged (or emit an error).
-        return item;
+        // @todo Add a test for this particular case
+        // External module: we cannot inspect; hard error
+        abort!(
+            module.ident.span(),
+            "#[access_control] cannot be used on external modules; \
+                use it on an `impl` block or an inline `mod`."
+        );
+        // return item;
     }
 
     // Wrong placement

@@ -66,6 +66,9 @@ fn test_increment_guarded_auth() {
     // assert_eq!(client.increment_guarded(&other, &5), 5);
 
 
+    // @todo This panic was causing an issue. Figure out how to gracefully handle a panic in case of a failure
+    // So that the negative cases can be tested.
+    
     // // Negative case: different user should fail
     // let res = std::panic::catch_unwind(|| {
     //     client.increment_guarded(&other, &1);

@@ -227,7 +227,8 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
             return item;
         }
 
-        // External module file; leave unchanged (or emit a policy error if you prefer).
+        // @todo @question Should an external module trigger an error??
+        // External module file; leave unchanged (or emit an error).
         return item;
     }
 

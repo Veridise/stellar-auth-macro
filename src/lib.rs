@@ -5,7 +5,7 @@ use access_control_macros::{access_control, no_access_control, authorized_by};
 #[contracttype]
 pub enum DataKey {
     Counter(Address),
-    Owner, // <— add this
+    Owner, // owner of the program
 }
 
 #[contract]
@@ -24,11 +24,16 @@ impl IncrementContract {
         count
     }
 
+    // @todo The owner key should be updated during deployment, and then successive updates require checking for owner auth.
     // Helper to set the expected owner (used by tests)
     #[no_access_control]
     pub fn set_owner(env: Env, owner: Address) {
         env.storage().persistent().set(&DataKey::Owner, &owner);
     }
+
+    // @todo Update name to increment_protected? Minor change but to be done only if makes sense.
+    // Remember to also update the names in the test.
+
 
     /// Uses the macro guard: Self::is_permitted(&env, &user) + user.require_auth()
     #[authorized_by(user, is_permitted)]
@@ -40,6 +45,7 @@ impl IncrementContract {
         count
     }
 
+    // @todo Maybe update this function name to onlyOwner()
     // Predicate used by #[authorized_by(...)]
     fn is_permitted(env: &Env, user: &Address) -> bool {
         let stored: Option<Address> = env.storage().persistent().get(&DataKey::Owner);

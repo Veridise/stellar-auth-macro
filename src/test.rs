@@ -59,19 +59,26 @@ fn test_increment_guarded_auth() {
     // Configure who is permitted
     client.set_owner(&user);
 
-    // Success case: permitted user
+    // Success case: allowed user - admin
     assert_eq!(client.increment_guarded(&user, &5), 5);
+}
 
-    // Uncomment to see error
-    // assert_eq!(client.increment_guarded(&other, &5), 5);
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_increment_guarded_auth_denied_should_panic() {
+    use soroban_sdk::{Address, Env};
 
+    let env = Env::default();
+    env.mock_all_auths();
 
-    // @todo This panic was causing an issue. Figure out how to gracefully handle a panic in case of a failure
-    // So that the negative cases can be tested.
-    
-    // // Negative case: different user should fail
-    // let res = std::panic::catch_unwind(|| {
-    //     client.increment_guarded(&other, &1);
-    // });
-    // assert!(res.is_err(), "expected unauthorized call to panic");
+    let contract_id = env.register(crate::IncrementContract, {});
+    let client = crate::IncrementContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.set_owner(&owner); // only `owner` is permitted
+
+    // This should panic due to the caller not fulfilling auth requirements
+    client.increment_guarded(&other, &1);
 }

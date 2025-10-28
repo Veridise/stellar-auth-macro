@@ -16,7 +16,6 @@ pub struct IncrementContract;
 impl IncrementContract {
     #[no_access_control]
     pub fn increment(env: Env, user: Address, value: u32) -> u32 {
-        user.require_auth();
         let key = DataKey::Counter(user.clone());
         let mut count: u32 = env.storage().persistent().get(&key).unwrap_or_default();
         count += value;
@@ -31,13 +30,9 @@ impl IncrementContract {
         env.storage().persistent().set(&DataKey::Owner, &owner);
     }
 
-    // @todo Update name to increment_protected? Minor change but to be done only if makes sense.
-    // Remember to also update the names in the test.
-
-
-    /// Uses the macro guard: Self::is_permitted(&env, &user) + user.require_auth()
-    #[authorized_by(user, is_permitted)]
-    pub fn increment_guarded(env: Env, user: Address, value: u32) -> u32 {
+    /// Uses the macro guard: Self::only_owner(&env, &user) + user.require_auth()
+    #[authorized_by(user, only_owner)]
+    pub fn increment_owner(env: Env, user: Address, value: u32) -> u32 {
         let key = DataKey::Counter(user.clone());
         let mut count: u32 = env.storage().persistent().get(&key).unwrap_or_default();
         count += value;
@@ -45,9 +40,8 @@ impl IncrementContract {
         count
     }
 
-    // @todo Maybe update this function name to onlyOwner()
     // Predicate used by #[authorized_by(...)]
-    fn is_permitted(env: &Env, user: &Address) -> bool {
+    fn only_owner(env: &Env, user: &Address) -> bool {
         let stored: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
         matches!(stored, Some(ref owner) if owner == user)
     }

@@ -46,7 +46,7 @@ fn test_increment_auth() {
 }
 
 #[test]
-fn test_increment_guarded_auth() {
+fn test_increment_owner_auth() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -60,12 +60,12 @@ fn test_increment_guarded_auth() {
     client.set_owner(&user);
 
     // Success case: allowed user - admin
-    assert_eq!(client.increment_guarded(&user, &5), 5);
+    assert_eq!(client.increment_owner(&user, &5), 5);
 }
 
 #[test]
 #[should_panic(expected = "unauthorized")]
-fn test_increment_guarded_auth_denied_should_panic() {
+fn test_increment_owner_auth_denied_should_panic() {
     use soroban_sdk::{Address, Env};
 
     let env = Env::default();
@@ -80,5 +80,5 @@ fn test_increment_guarded_auth_denied_should_panic() {
     client.set_owner(&owner); // only `owner` is permitted
 
     // This should panic due to the caller not fulfilling auth requirements
-    client.increment_guarded(&other, &1);
+    client.increment_owner(&other, &1);
 }

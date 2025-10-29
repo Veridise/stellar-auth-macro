@@ -194,7 +194,16 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
             if let ImplItem::Fn(m) = it {
                 // Consider anything not-private as requiring the marker:
                 // (pub, pub(crate), pub(super), pub(in ...))
-                let is_publicish = !matches!(m.vis, Visibility::Inherited);
+                let is_trait_impl = impl_block.trait_.is_some();
+                let has_contractimpl_attr = impl_block
+                    .attrs
+                    .iter()
+                    .any(|a| a.path().is_ident("contractimpl"));
+
+                let is_publicish = is_trait_impl
+                    || has_contractimpl_attr
+                    || !matches!(m.vis, syn::Visibility::Inherited);
+
                 if is_publicish && !has_access_attr(&m.attrs) {
                     emit_error!(
                         m.sig.ident.span(),

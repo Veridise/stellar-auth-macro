@@ -16,6 +16,7 @@ pub struct IncrementContract;
 impl IncrementContract {
     #[no_access_control]
     pub fn increment(env: Env, user: Address, value: u32) -> u32 {
+        user.require_auth();
         let key = DataKey::Counter(user.clone());
         let mut count: u32 = env.storage().persistent().get(&key).unwrap_or_default();
         count += value;

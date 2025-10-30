@@ -20,6 +20,7 @@ fn test_increment_auth() {
     let user_1 = Address::generate(&env);
     let user_2 = Address::generate(&env);
 
+    // No need to initialize for this test, since `increment` doesn't depend on owner.
     assert_eq!(client.increment(&user_1, &5), 5);
 
     // Verify that the user indeed had to authorize a call of `increment`
@@ -53,32 +54,30 @@ fn test_increment_owner_auth() {
     let contract_id = env.register(IncrementContract, {});
     let client = IncrementContractClient::new(&env, &contract_id);
 
-    let user = Address::generate(&env);
-    // let other = Address::generate(&env);
+    let owner = Address::generate(&env);
 
-    // Configure who is permitted
-    client.set_owner(&user);
+    // Set the owner once during deployment/init.
+    client.initialize(&owner);
 
-    // Success case: allowed user - admin
-    assert_eq!(client.increment_owner(&user, &5), 5);
+    // This should be successful since owner is authorized to call increment_owner()
+    assert_eq!(client.increment_owner(&owner, &5), 5);
 }
 
 #[test]
 #[should_panic(expected = "unauthorized")]
 fn test_increment_owner_auth_denied_should_panic() {
-    use soroban_sdk::{Address, Env};
-
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(crate::IncrementContract, {});
-    let client = crate::IncrementContractClient::new(&env, &contract_id);
+    let contract_id = env.register(IncrementContract, {});
+    let client = IncrementContractClient::new(&env, &contract_id);
 
     let owner = Address::generate(&env);
     let other = Address::generate(&env);
 
-    client.set_owner(&owner); // only `owner` is permitted
+    // Initialize sets the expected owner.
+    client.initialize(&owner);
 
-    // This should panic due to the caller not fulfilling auth requirements
+    // This should panic due to the caller not fulfilling onlyOwner() requirements.
     client.increment_owner(&other, &1);
 }

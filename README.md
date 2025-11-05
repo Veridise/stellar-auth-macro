@@ -4,7 +4,7 @@ This project is experimental and unaudited. Use at your own risk and review gene
 
 # Overview
 
-In Sororban, it is common to forget to validate access control properly. This is because there is no global msg.sender and instead an Address is passed as an input into the methods for performing any validations. Any time a privileged action is taken one must both verify the address is relevant (for example that it’s the owner) and prove the caller actually authorized the invocation with require_auth(). These two steps are easy to miss and apply consistently as the number of functions and/or contracts within a project grow.
+In Sororban, it is common to forget to validate access control properly. This is because there is no global `msg.sender` and instead an `Address` is passed as an input into the methods for performing any validations. Any time a privileged action is taken one must both verify the address is relevant (for example that it’s the `owner`) and prove the caller actually authorized the invocation with `require_auth()`. These two steps are easy to miss and apply consistently as the number of functions and/or contracts within a project grow.
 
 This crate adds a tiny, declarative access-control layer so you can state intent and let a proc-macro enforce it. Put #[access_control] on your impl block, then mark each public entrypoint as either explicitly open with #[no_access_control] or protected with #[authorized_by(arg, predicate)]. The macro injects both the predicate check and the require_auth() call, and it fails the build if any public function is missing either one of these annotations.
 
@@ -29,6 +29,7 @@ impl MyContract {
 }
 
 impl MyContract {
+    // The predicate used by authorized_by() to enforce acess control
     fn only_owner(env: &Env, who: &Address) -> bool {
         env.storage().persistent().get::<_, Address>(&DataKey::Owner)
             .map_or(false, |owner| &owner == who)
@@ -40,11 +41,11 @@ impl MyContract {
 
 ## Limitations
 
-This macro is intentionally small and opinionated. It only instruments real functions inside the annotated `impl` block; it won’t touch code generated elsewhere (for example, client stubs or wrappers emitted by other macros). It scans “public” methods—trait impls, anything in an `impl` also tagged with `#[contractimpl]`, or any method with non-private visibility, and requires each to be marked `#[no_access_control]` or `#[authorized_by(...)]`. Private helpers aren’t checked.
+This macro is purposefully small and opinionated by design. It only instruments functions inside annotated `impl` block and does not operate on code generated elsewhere (for example, client stubs or wrappers emitted by other macros). It scans “public” methods—trait impls, anything in an `impl` also tagged with `#[contractimpl]`, or any method with non-private visibility, and requires each `pub` method to be marked `#[no_access_control]` or `#[authorized_by(...)]`.
 
-Guards are injected only when the method signature includes an `env` parameter literally named `env`, plus a simple (non-destructured) parameter whose identifier matches the first argument to `#[authorized_by]`. If either is missing or renamed, the attribute is left in place and the macro quietly skips instrumentation. The guarded parameter must support `require_auth()` (on Soroban that’s `Address`); if your type doesn’t, the injected call will fail to compile.
+The procedural macro only injects a guard when the method signature includes an `env` parameter named `env`, plus a simple (non-destructured) parameter whose identifier matches the first argument to `#[authorized_by]`. If either is missing or renamed, the attribute is left in place and the macro quietly skips instrumentation. The guarded parameter must support `require_auth()` (on Soroban that’s `Address`). If any type does not support it, the injected call will fail to compile.
 
-Predicate resolution is simple: a single-segment name is invoked as `Self::predicate`, otherwise the path is used as written. The predicate should be pure and side-effect free; the macro calls it before `require_auth()`. It does not provide role composition, multi-sig policies, or reentrancy protection, and it doesn’t rewrite or verify logic inside your predicate.
+For predicate resolution, a single-segment name is invoked as `Self::predicate`, otherwise the path is used as written. The macro calls it before `require_auth()`. The predicate should only be used to perform the intended verification, and should not modify any state. The macro does not currently provide role composition, multi-sig policies, or reentrancy protection, and it doesn’t rewrite or verify the logic inside your predicate.
 
 Interacting proc-macros can still confuse IDEs. We bias toward being non-fatal for unresolved shapes to avoid rust-analyzer spam, but you may see stale diagnostics until a clean build. Finally, `#[access_control]` must be placed on an inline `impl` (or inline `mod`); external modules are rejected because their contents aren’t visible at macro time.
 
@@ -84,3 +85,7 @@ If you change instrumentation logic, include:
 Please keep the macro behavior predictable and the error messages short and actionable.
 
 ## TODOS
+
+The following improvements to the macro are in the pipeline.
+
+* Integrate with Open Zeppelin's access control or role-based access control for the predicate

@@ -4,9 +4,22 @@ This project is experimental and unaudited. Use at your own risk and review gene
 
 # Overview
 
-In Soroban, it is common to get access control wrong. This is because there is no global `msg.sender` and instead an `Address` is used as an argument for authorization logic. Any time a privileged action is taken one must both verify the address is relevant (for example that it is the `owner`) and prove the caller actually authorized the invocation with `require_auth()`. These two steps are easy to miss and apply consistently as the number of functions and/or contracts within a project grow.
+When writing smart contracts, it is easy to get access control wrong.
+In the Soroban ecosystem, developers used to Solidity make several common errors.
+This is because there is no global `msg.sender`. Instead, an `Address` is used as an argument for authorization logic. Any time a privileged action is taken one must both verify the address is relevant (for example that it is the `owner`) and prove the caller actually authorized the invocation with `require_auth()`.
+Forgetting one or both of these two steps is easy to do as the number of functions and/or contracts within a project grow.
+This crate asks: why not let the compiler remember for you?
 
-This crate adds a tiny, declarative access-control layer so you can state intent and let a proc-macro enforce it. Put `#[access_control]` on your `impl` block, then mark each public entrypoint as either explicitly open with `#[no_access_control]` or protected with `#[authorized_by(arg, predicate)]`. The macro injects both the predicate check and the `require_auth()` call, and it fails to build if any public function is missing either one of these annotations.
+This crate adds a tiny, declarative access-control layer so you can state intent and let a proc-macro enforce it. Put `#[access_control]` on your contract `impl` block. Once done, the compiler will require you to mark each public entrypoint as either
+* explicitly open with `#[no_access_control]`
+* protected with `#[authorized_by(arg, predicate)]`.
+
+The macro injects both the predicate check and the `require_auth()` call for any function tagged for authorization, and it fails to build if any public function is missing either one of these annotations.
+
+This is useful for both developers and auditors! Developers can rest easy knowing that forgetting access control
+on newly added or updated functions will trigger an error, instead of silently succeeding.
+Auditors can understand the protocol more quickly, spotting a glaring red flag whenever a privileged
+function is explicitly marked with `#[no_access_control]`.
 
 # Usage
 
@@ -14,7 +27,7 @@ Add the macros crate to your project directly from GitHub, then import the attri
 
 ```toml
 # Cargo.toml
-[dependencies]
+[dependencies]****
 soroban-sdk = { version = "23.0.1" }
 access_control_macros = { git = "https://github.com/Veridise/stellar-auth-macro.git", rev = "abcdef1" }
 ```
@@ -108,7 +121,7 @@ It can be:
 * an inherent method on the same type (e.g. `fn only_owner(&Env, &Address) -> bool`), referenced as `only_owner` (the macro rewrites to `Self::only_owner`), or
 * any path like `crate::auth::is_admin`.
 
-**Do not** call `require_auth()` inside the predicate; the macro injects that **after** the predicate check passes. Typically, predicates should answer only “is this address allowed, given the current on-chain state?”
+Calling `require_auth()` inside the predicate is *not* necessary; the macro injects that **after** the predicate check passes. Typically, predicates should answer only “is this address allowed, given the current on-chain state?”
 
 ### External modules are ignored (by design)
 
@@ -118,12 +131,6 @@ It can be:
 * an **inline** `mod` (the content is present in the same file).
 
 If you put it on an **external** module (declared with `mod x;` and defined elsewhere), the macro **cannot** inspect the contents. In that case it raises a hard error. Therefore to use the access control macro, use it directly on the `impl` (or inline the module).
-
-### How we avoid conflicts with `#[contractimpl]`
-
-To avoid stepping on #[contractimpl], the `#[access_control]` macro edits the `impl` in place. It parses each method, injects the guard at the top of methods tagged with #[authorized_by(..)], and then strips that attribute so the downstream macro never sees it. If a method is missing either the env parameter or the named argument, the macro simply skips instrumentation for that method while still enforcing that every public function is annotated.
-
-This avoids false positives in the rust-analyzer and flags actual mistakes when you compile. When something’s wrong, the macro emits a clear error naming the unprotected function, or if #[authorized_by(..)] points at a non-existent parameter, it leaves the method unchanged and warns, helping you correct the annotation without wrestling with macro panics.
 
 ### Macro expansion: Before and After
 
@@ -137,7 +144,7 @@ impl MyContract {
 
     // protected entrypoint
     #[authorized_by(user, only_owner)]
-    pub fn incremet_balance(env: Env, user: Address, n: u32) {
+    pub fn increment_balance(env: Env, user: Address, n: u32) {
         /* body */
     }
 
@@ -155,7 +162,7 @@ After `#[access_control]`:
 impl MyContract {
     pub fn view_balance(env: Env) { /* unchanged */ }
 
-    pub fn incremet_balance(env: Env, user: Address, n: u32) {
+    pub fn increment_balance(env: Env, user: Address, n: u32) {
         if !(Self::is_owner(&env, &user)) {
             ::core::panic!("unauthorized: only_owner(env,user) failed");
         }
@@ -188,10 +195,6 @@ public method {<name>} is missing #[no_access_control] or #[authorized_by(...)]
 
 Add the appropriate attribute and rebuild.
 
-### A note on generated client methods
-
-Methods created by `#[contractimpl]` (client stubs) are **not** places to put `#[authorized_by]`. The macro strips that attribute **before** `contractimpl` and runs specifically to avoid forwarding it. Always annotate the **original** methods in your `impl`, and the client wrappers will invoke the now instrumented bodies.
-
 ### Example: end-to-end
 
 ```rust
@@ -210,10 +213,10 @@ impl GenericLendingProtocol {
         send_fee(&env, caller);
     }
 
-    // #[contractimpl] generates external contract entrypoints for every function inside that impl block, 
+    // #[contractimpl] generates external contract entrypoints for every function inside that impl block,
     // regardless of Rust visibility. Even methods without pub will be exported as callable contract functions.
-    // If you want the predicate to be private, put it outside the #[contractimpl] block as a free fn or in a separate impl 
-    // without the attribute  
+    // If you want the predicate to be private, put it outside the #[contractimpl] block as a free fn or in a separate impl
+    // without the attribute
     fn only_owner(env: &Env, who: &Address) -> bool {
         // Owner should be set within an initializer
         let owner: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
@@ -228,9 +231,13 @@ Place `#[access_control]` **above** `#[contractimpl]`, keep predicates read-only
 
 This macro is purposefully small and opinionated by design. It only instruments functions inside annotated `impl` block and does not operate on code generated elsewhere (for example, client stubs or wrappers emitted by other macros). It scans “public” methods—trait impls, anything in an `impl` also tagged with `#[contractimpl]`, or any method with non-private visibility, and requires each `pub` method to be marked `#[no_access_control]` or `#[authorized_by(...)]`.
 
-The procedural macro only injects a guard when the method signature includes an `env` parameter named `env`, plus a simple (non-destructured) parameter whose identifier matches the first argument to `#[authorized_by]`. If either is missing or renamed, the attribute is left in place and the macro quietly skips instrumentation. The guarded parameter must support `require_auth()` (on Soroban that’s `Address`). If any type does not support it, the injected call will fail to compile.
+In `#[access_control]` `impl` blocks, the procedural macro will cause a compiler error if the access-controlled method signature
+does not include an `env` parameter named `env`, if no parameter matches the identifier specified
+in `#[authorized_by]`, or if that parameter does not support `require_auth()`.
+However, `#[authorized_by]` only functions correctly if inside a `#[access_control]` `impl` block.
+If the outer macro is not present, the inner attribute is left in place and the macro quietly skips instrumentation.
 
-For predicate resolution, a single-segment name is invoked as `Self::predicate`, otherwise the path is used as written. The macro calls it before `require_auth()`. The predicate should only be used to perform the intended verification, and should not modify any state. The macro does not currently provide role composition, multi-sig policies, or reentrancy protection, and it doesn’t rewrite or verify the logic inside your predicate.
+For predicate resolution, a single-segment name is invoked as `Self::predicate`, otherwise the path is used as written. The macro calls it before `require_auth()`. The predicate should only be used to perform the intended verification, and should not modify any state. The macro does not **currently** provide role composition, multi-sig policies, or reentrancy protection, and it doesn’t rewrite or verify the logic inside your predicate.
 
 Interacting proc-macros can still confuse IDEs. We bias toward being non-fatal for unresolved shapes to avoid rust-analyzer spam, but you may see stale diagnostics until a clean build. Finally, `#[access_control]` must be placed on an inline `impl` (or inline `mod`). External modules are rejected because their contents aren’t visible at macro time.
 

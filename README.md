@@ -4,9 +4,22 @@ This project is experimental and unaudited. Use at your own risk and review gene
 
 # Overview
 
-In Soroban, it is common to get access control wrong. This is because there is no global `msg.sender` and instead an `Address` is used as an argument for authorization logic. Any time a privileged action is taken one must both verify the address is relevant (for example that it is the `owner`) and prove the caller actually authorized the invocation with `require_auth()`. These two steps are easy to miss and apply consistently as the number of functions and/or contracts within a project grow.
+When writing smart contracts, it is easy to get access control wrong.
+In the Soroban ecosystem, developers used to Solidity make several common errors.
+This is because there is no global `msg.sender`. Instead, an `Address` is used as an argument for authorization logic. Any time a privileged action is taken one must both verify the address is relevant (for example that it is the `owner`) and prove the caller actually authorized the invocation with `require_auth()`.
+Forgetting one or both of these two steps is easy to do as the number of functions and/or contracts within a project grow.
+This crate asks: why not let the compiler remember for you?
 
-This crate adds a tiny, declarative access-control layer so you can state intent and let a proc-macro enforce it. Put `#[access_control]` on your `impl` block, then mark each public entrypoint as either explicitly open with `#[no_access_control]` or protected with `#[authorized_by(arg, predicate)]`. The macro injects both the predicate check and the `require_auth()` call, and it fails to build if any public function is missing either one of these annotations.
+This crate adds a tiny, declarative access-control layer so you can state intent and let a proc-macro enforce it. Put `#[access_control]` on your contract `impl` block. Once done, the compiler will require you to mark each public entrypoint as either
+* explicitly open with `#[no_access_control]`
+* protected with `#[authorized_by(arg, predicate)]`.
+
+The macro injects both the predicate check and the `require_auth()` call for any function tagged for authorization, and it fails to build if any public function is missing either one of these annotations.
+
+This is useful for both developers and auditors! Developers can rest easy knowing that forgetting access control
+on newly added or updated functions will trigger an error, instead of silently succeeding.
+Auditors can understand the protocol more quickly, spotting a glaring red flag whenever a privileged
+function is explicitly marked with `#[no_access_control]`.
 
 # Usage
 
@@ -210,10 +223,10 @@ impl GenericLendingProtocol {
         send_fee(&env, caller);
     }
 
-    // #[contractimpl] generates external contract entrypoints for every function inside that impl block, 
+    // #[contractimpl] generates external contract entrypoints for every function inside that impl block,
     // regardless of Rust visibility. Even methods without pub will be exported as callable contract functions.
-    // If you want the predicate to be private, put it outside the #[contractimpl] block as a free fn or in a separate impl 
-    // without the attribute  
+    // If you want the predicate to be private, put it outside the #[contractimpl] block as a free fn or in a separate impl
+    // without the attribute
     fn only_owner(env: &Env, who: &Address) -> bool {
         // Owner should be set within an initializer
         let owner: Option<Address> = env.storage().persistent().get(&DataKey::Owner);

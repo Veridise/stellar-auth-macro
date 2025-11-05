@@ -10,17 +10,35 @@ This crate adds a tiny, declarative access-control layer so you can state intent
 
 # Usage
 
+Add the macros crate to your project directly from GitHub, then import the attributes. In `Cargo.toml`, point to the repository and a pinned revision.
+
+```toml
+# Cargo.toml
+[dependencies]
+soroban-sdk = { version = "23.0.1" }
+access_control_macros = { git = "https://github.com/Veridise/stellar-auth-macro.git", rev = "abcdef1" }
 ```
-// The access control macro will be applied to this contract implementation.
+
+In your code, `use` the three attributes as follows:
+
+```rust
+use access_control_macros::{access_control, no_access_control, authorized_by};
+```
+
+Annotate your contract implementation with `#[access_control]` placed **above** `#[contractimpl]`. This order ensures the guard code is injected before Soroban generates client stubs. For each public entrypoint, mark it as open with `#[no_access_control]` (no guard injected), or protected with `#[authorized_by(arg, predicate)]` (the macro injects a predicate check and `require_auth()` on the specified argument). A minimal example looks like this:
+
+```rust
 #[access_control]
 #[contractimpl]
 impl MyContract {
-    // No access control required, so no guard injected
+    // Open endpoint — no guard injected.
     #[no_access_control]
-    pub fn balance_of(env: Env, user: Address) -> u128 { ... }
+    pub fn balance_of(env: Env, user: Address) -> u128 {
+        // ...
+    }
 
-    // Protected endpoint — guard is injected at the top of the body:
-    //   if !Self::only_owner(&env, &caller) { panic!("unauthorized") }
+    // Protected endpoint — macro injects at the top:
+    //   if !Self::only_owner(&env, &caller) { panic!("unauthorized: ...") }
     //   caller.require_auth();
     #[authorized_by(caller, only_owner)]
     pub fn change_owner(env: Env, caller: Address, new_owner: Address) {
@@ -29,15 +47,13 @@ impl MyContract {
 }
 
 impl MyContract {
-    // The predicate used by authorized_by() to enforce acess control
+    // Predicate used by authorized_by()
     fn only_owner(env: &Env, who: &Address) -> bool {
         env.storage().persistent().get::<_, Address>(&DataKey::Owner)
             .map_or(false, |owner| &owner == who)
     }
 }
 ```
-
-## Details
 
 ## Details
 
@@ -60,7 +76,7 @@ Injected guard (conceptually):
 }
 ```
 
-3. For each public-ish method (public visibility **or** in a trait impl **or** inside an impl that will be passed to `#[contractimpl]`), it **enforces** that the method is either:
+3. For each public method (public visibility **or** in a trait impl **or** inside an impl that will be passed to `#[contractimpl]`), it **enforces** that the method is either:
 
    * marked `#[no_access_control]` (explicitly open), or
    * marked `#[authorized_by(..)]` (protected).

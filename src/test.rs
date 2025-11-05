@@ -14,7 +14,7 @@ fn test_increment_auth() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(IncrementContract, {});
+    let contract_id = env.register(IncrementContract, ());
     let client = IncrementContractClient::new(&env, &contract_id);
 
     let user_1 = Address::generate(&env);
@@ -51,7 +51,7 @@ fn test_increment_owner_auth() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(IncrementContract, {});
+    let contract_id = env.register(IncrementContract, ());
     let client = IncrementContractClient::new(&env, &contract_id);
 
     let owner = Address::generate(&env);
@@ -69,7 +69,7 @@ fn test_increment_owner_auth_denied_should_panic() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(IncrementContract, {});
+    let contract_id = env.register(IncrementContract, ());
     let client = IncrementContractClient::new(&env, &contract_id);
 
     let owner = Address::generate(&env);

@@ -1,6 +1,6 @@
 #![no_std]
+use access_control_macros::{access_control, authorized_by, no_access_control};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
-use access_control_macros::{access_control, no_access_control, authorized_by};
 
 #[contracttype]
 pub enum DataKey {
@@ -22,7 +22,7 @@ impl IncrementContract {
 #[access_control]
 #[contractimpl]
 impl IncrementContract {
-        // 1) Set owner during deployment/init (one-time).
+    // 1) Set owner during deployment/init (one-time).
     #[no_access_control]
     pub fn initialize(env: Env, owner: Address) {
         if env.storage().persistent().has(&DataKey::Owner) {

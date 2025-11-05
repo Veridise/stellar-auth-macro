@@ -121,7 +121,7 @@ It can be:
 * an inherent method on the same type (e.g. `fn only_owner(&Env, &Address) -> bool`), referenced as `only_owner` (the macro rewrites to `Self::only_owner`), or
 * any path like `crate::auth::is_admin`.
 
-**Do not** call `require_auth()` inside the predicate; the macro injects that **after** the predicate check passes. Typically, predicates should answer only “is this address allowed, given the current on-chain state?”
+Calling `require_auth()` inside the predicate is *not* necessary; the macro injects that **after** the predicate check passes. Typically, predicates should answer only “is this address allowed, given the current on-chain state?”
 
 ### External modules are ignored (by design)
 
@@ -131,12 +131,6 @@ It can be:
 * an **inline** `mod` (the content is present in the same file).
 
 If you put it on an **external** module (declared with `mod x;` and defined elsewhere), the macro **cannot** inspect the contents. In that case it raises a hard error. Therefore to use the access control macro, use it directly on the `impl` (or inline the module).
-
-### How we avoid conflicts with `#[contractimpl]`
-
-To avoid stepping on #[contractimpl], the `#[access_control]` macro edits the `impl` in place. It parses each method, injects the guard at the top of methods tagged with #[authorized_by(..)], and then strips that attribute so the downstream macro never sees it. If a method is missing either the env parameter or the named argument, the macro simply skips instrumentation for that method while still enforcing that every public function is annotated.
-
-This avoids false positives in the rust-analyzer and flags actual mistakes when you compile. When something’s wrong, the macro emits a clear error naming the unprotected function, or if #[authorized_by(..)] points at a non-existent parameter, it leaves the method unchanged and warns, helping you correct the annotation without wrestling with macro panics.
 
 ### Macro expansion: Before and After
 
@@ -150,7 +144,7 @@ impl MyContract {
 
     // protected entrypoint
     #[authorized_by(user, only_owner)]
-    pub fn incremet_balance(env: Env, user: Address, n: u32) {
+    pub fn increment_balance(env: Env, user: Address, n: u32) {
         /* body */
     }
 
@@ -168,7 +162,7 @@ After `#[access_control]`:
 impl MyContract {
     pub fn view_balance(env: Env) { /* unchanged */ }
 
-    pub fn incremet_balance(env: Env, user: Address, n: u32) {
+    pub fn increment_balance(env: Env, user: Address, n: u32) {
         if !(Self::is_owner(&env, &user)) {
             ::core::panic!("unauthorized: only_owner(env,user) failed");
         }
@@ -200,10 +194,6 @@ public method {<name>} is missing #[no_access_control] or #[authorized_by(...)]
 ```
 
 Add the appropriate attribute and rebuild.
-
-### A note on generated client methods
-
-Methods created by `#[contractimpl]` (client stubs) are **not** places to put `#[authorized_by]`. The macro strips that attribute **before** `contractimpl` and runs specifically to avoid forwarding it. Always annotate the **original** methods in your `impl`, and the client wrappers will invoke the now instrumented bodies.
 
 ### Example: end-to-end
 

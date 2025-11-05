@@ -125,27 +125,27 @@ If you put it on an **external** module (declared with `mod x;` and defined else
 ### How we avoid conflicts with `#[contractimpl]`
 
 * **In-place editing**: `access_control` uses `syn` to parse your `impl` and **replaces** each annotated method’s block with a guarded block (the snippet shown above). It then **removes** the `#[authorized_by(..)]` attribute so `contractimpl` never sees it.
-* **Graceful fallbacks**: If a method doesn’t have both required parameters (`env` and the named `arg`), the instrumentation simply **skips** that method (and `access_control` still enforces the “every public-ish fn must be annotated” rule). This prevents rust-analyzer from spamming errors on generated wrappers while still catching real misses at build time.
-* **Clear diagnostics**: If a function is public-ish but lacks `#[no_access_control]` or `#[authorized_by(..)]`, we emit a focused error naming that function. If an `#[authorized_by(..)]` references a missing parameter (e.g., `sender` not in the signature), we warn and leave the body unchanged; `access_control` will then complain about the missing protection on that entrypoint, which points you to the underlying fix.
+* **Graceful fallbacks**: If a method doesn’t have both required parameters (`env` and the named `arg`), the instrumentation simply **skips** that method (and `access_control` still enforces the “every public fn must be annotated” rule). This prevents rust-analyzer from spamming errors on generated wrappers while still catching real misses at build time.
+* **Clear diagnostics**: If a function is public but lacks `#[no_access_control]` or `#[authorized_by(..)]`, we emit a focused error naming that function. If an `#[authorized_by(..)]` references a missing parameter (e.g., `sender` not in the signature), we warn and leave the body unchanged; `access_control` will then complain about the missing protection on that entrypoint, which points you to the underlying fix.
 
-### Before/after example
+### Macro expansion: Before and After
 
-Source:
+Before:
 
 ```rust
 impl MyContract {
     // open entrypoint
     #[no_access_control]
-    pub fn ping(env: Env) { /* ... */ }
+    pub fn view_balance(env: Env) { /* ... */ }
 
     // protected entrypoint
     #[authorized_by(user, only_owner)]
-    pub fn bump(env: Env, user: Address, n: u32) {
-        /* original body */
+    pub fn incremet_balance(env: Env, user: Address, n: u32) {
+        /* body */
     }
 
     // predicate (pure; read-only)
-    fn only_owner(env: &Env, user: &Address) -> bool {
+    fn is_owner(env: &Env, user: &Address) -> bool {
         let owner: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
         matches!(owner, Some(ref o) if o == user)
     }
@@ -156,34 +156,34 @@ After `#[access_control]`:
 
 ```rust
 impl MyContract {
-    pub fn ping(env: Env) { /* unchanged */ }
+    pub fn view_balance(env: Env) { /* unchanged */ }
 
-    pub fn bump(env: Env, user: Address, n: u32) {
-        if !(Self::only_owner(&env, &user)) {
+    pub fn incremet_balance(env: Env, user: Address, n: u32) {
+        if !(Self::is_owner(&env, &user)) {
             ::core::panic!("unauthorized: only_owner(env,user) failed");
         }
         user.require_auth();
-        /* original body */
+        /* body */
     }
 
-    fn only_owner(env: &Env, user: &Address) -> bool { /* unchanged */ }
+    fn is_owner(env: &Env, user: &Address) -> bool { /* unchanged */ }
 }
 ```
 
 ### Referencing predicates by path
 
-You can point to a predicate outside the impl:
+You can point to a predicate outside the impl using:
 
 ```rust
 #[authorized_by(caller, crate::auth::is_admin)]
 pub fn rotate_keys(env: Env, caller: Address) { /* ... */ }
 ```
 
-As long as `crate::auth::is_admin(&Env, &Address) -> bool` exists and is pure, the guard injects cleanly.
+As long as `crate::auth::is_admin(&Env, &Address) -> bool` exists and, the guard will inject cleanly.
 
 ### What happens if you forget an annotation?
 
-If a public-ish function in the `impl` has **no** `#[no_access_control]` and **no** `#[authorized_by(..)]`, compilation fails with:
+If a public function in the `impl` has **no** `#[no_access_control]` and **no** `#[authorized_by(..)]`, compilation fails with:
 
 ```
 public method <name> is missing #[no_access_control] or #[authorized_by(...)]
@@ -193,7 +193,7 @@ Add the appropriate attribute and rebuild.
 
 ### A note on generated client methods
 
-Methods created by `#[contractimpl]` (client shims) are **not** places to put `#[authorized_by]`; our macro strips that attribute **before** `contractimpl` runs specifically to avoid forwarding it. Always annotate the **original** methods in your impl; the client wrappers will invoke your now-instrumented bodies.
+Methods created by `#[contractimpl]` (client stubs) are **not** places to put `#[authorized_by]`; our macro strips that attribute **before** `contractimpl` runs specifically to avoid forwarding it. Always annotate the **original** methods in your impl; the client wrappers will invoke your now-instrumented bodies.
 
 ### Example: end-to-end
 
@@ -219,7 +219,7 @@ impl Banking {
 }
 ```
 
-Place `#[access_control]` **above** `#[contractimpl]`, keep predicates pure, and mark every public-ish entrypoint as **open** or **protected**. The macro handles the rest—injecting checks, ordering safely with `contractimpl`, ignoring external modules, and surfacing crisp compile-time errors when something’s missing.
+Place `#[access_control]` **above** `#[contractimpl]`, keep predicates pure, and mark every public entrypoint as **open** or **protected**. The macro handles the rest—injecting checks, ordering safely with `contractimpl`, ignoring external modules, and surfacing crisp compile-time errors when something’s missing.
 
 ## Limitations
 

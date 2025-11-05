@@ -8,6 +8,7 @@ pub enum DataKey {
     Owner, // owner of the program
 }
 
+// Methods that we do not want to be public
 #[contract]
 pub struct IncrementContract;
 

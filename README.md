@@ -273,6 +273,6 @@ Please keep the macro behavior predictable and the error messages short and acti
 
 The following improvements/additions to the macro are in the pipeline.
 
-* Add detailed in-line comments outlining the macro internal logic
+* Add a detailed document and in-line comments outlining the macro internal logic
 * Integrate with Open Zeppelin's access control
 * Add support for role based predicates and predicates with different shapes

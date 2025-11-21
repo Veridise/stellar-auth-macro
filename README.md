@@ -283,3 +283,4 @@ The following improvements/additions to the macro are in the pipeline.
 * Add a detailed document and in-line comments outlining the macro internal logic
 * Integrate with Open Zeppelin's access control
 * Add support for role based predicates and predicates with different shapes
+* Eliminate pub(crate) Fns from the enforced functions

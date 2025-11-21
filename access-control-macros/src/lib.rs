@@ -1,8 +1,8 @@
 //! Proc macros:
-//! - #[access_control] on an `impl` block (or inline `mod`):
+//! - #[access_control] on an `impl` block:
 //!     * Instruments methods marked with #[authorized_by(...)] by injecting guards
 //!       directly into their bodies, and removes the attribute so it isn't forwarded.
-//!     * Emits compile errors if any public-ish fn is missing #[no_access_control]
+//!     * Emits compile errors if any public fn is missing #[no_access_control]
 //!       or #[authorized_by(...)].
 //! - #[no_access_control] on a function: marker (no-op).
 //! - #[authorized_by(arg_ident, check_fn_or_path)] on a function:
@@ -17,13 +17,11 @@ use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
     spanned::Spanned,
-    Attribute, FnArg, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, ItemMod, Meta, Pat, Path,
-    Token, Visibility,
+    Attribute, FnArg, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, Meta, Pat, Path, Token, Type,
+    Visibility,
 };
 
-use proc_macro_error::{
-    abort, abort_if_dirty, emit_error, emit_warning, proc_macro_error,
-};
+use proc_macro_error::{abort, abort_if_dirty, emit_error, emit_warning, proc_macro_error};
 
 fn has_no_access_attr(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|a| a.path().is_ident("no_access_control"))
@@ -76,6 +74,45 @@ fn find_param_ident(sig: &syn::Signature, name: &str) -> Option<syn::Ident> {
         }
     }
     None
+}
+
+/// Return the parameter identifiers whose *spelled* type is `Env` (or `&Env`, or `soroban_sdk::Env`).
+fn env_type_candidates(sig: &syn::Signature) -> Vec<syn::Ident> {
+    let mut out = Vec::new();
+    for arg in &sig.inputs {
+        let FnArg::Typed(pat_ty) = arg else { continue };
+        let Pat::Ident(pat_ident) = &*pat_ty.pat else { continue };
+
+        // peel references like &Env
+        let mut ty: &Type = &*pat_ty.ty;
+        if let Type::Reference(r) = ty {
+            ty = &*r.elem;
+        }
+        if let Type::Path(p) = ty {
+            if let Some(seg) = p.path.segments.last() {
+                if seg.ident == "Env" {
+                    out.push(pat_ident.ident.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Hybrid Env resolution:
+/// 1) If a parameter literally named `env` exists, use it.
+/// 2) Else, if exactly one parameter has type `Env` (by spelled name), use it.
+/// 3) Else, return None (caller may warn/error).
+fn find_env_ident_hybrid(sig: &syn::Signature) -> Option<syn::Ident> {
+    if let Some(id) = find_param_ident(sig, "env") {
+        return Some(id);
+    }
+    let cands = env_type_candidates(sig);
+    if cands.len() == 1 {
+        Some(cands[0].clone())
+    } else {
+        None
+    }
 }
 
 fn instrument_block(
@@ -133,14 +170,25 @@ fn try_instrument_method(m: &mut ImplItemFn, args: &AuthorizedArgs) -> Option<()
         );
         return None;
     }
-    let env_ident = match find_param_ident(&m.sig, "env") {
+    let env_ident = match find_env_ident_hybrid(&m.sig) {
         Some(id) => id,
         None => {
-            emit_warning!(
-                m.sig.span(),
-                "skipping #[authorized_by]: no `env` parameter found on `{}`; leaving unchanged",
-                m.sig.ident
-            );
+            // See if we can give a better hint (ambiguous vs missing) for ergonomics
+            let cands = env_type_candidates(&m.sig);
+            if cands.len() > 1 {
+                emit_warning!(
+                    m.sig.span(),
+                    "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
+                     please name the desired one `env`",
+                    m.sig.ident
+                );
+            } else {
+                emit_warning!(
+                    m.sig.span(),
+                    "skipping #[authorized_by]: no `Env` parameter found on `{}`; leaving unchanged",
+                    m.sig.ident
+                );
+            }
             return None;
         }
     };
@@ -154,37 +202,6 @@ fn try_instrument_method(m: &mut ImplItemFn, args: &AuthorizedArgs) -> Option<()
     let arg = &args.arg;
     let body = &m.block;
     m.block = *instrument_block(body, call_path, &env_ident, arg, m.sig.span());
-    Some(())
-}
-
-fn try_instrument_free_fn(f: &mut ItemFn, args: &AuthorizedArgs) -> Option<()> {
-    if !param_exists(&f.sig, &args.arg) {
-        emit_warning!(
-            args.arg.span(),
-            "skipping #[authorized_by]: parameter `{}` not found on function `{}`",
-            args.arg,
-            f.sig.ident
-        );
-        return None;
-    }
-    let env_ident = match find_param_ident(&f.sig, "env") {
-        Some(id) => id,
-        None => {
-            emit_warning!(
-                f.sig.span(),
-                "skipping #[authorized_by]: no `env` parameter found on `{}`; leaving unchanged",
-                f.sig.ident
-            );
-            return None;
-        }
-    };
-    let call_path = {
-        let p = &args.check_fn;
-        quote! { #p }
-    };
-    let arg = &args.arg;
-    let body = &f.block;
-    f.block = instrument_block(body, call_path, &env_ident, arg, f.sig.span());
     Some(())
 }
 
@@ -205,7 +222,7 @@ pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Case 1: method inside an `impl`
     if let Ok(mut m) = syn::parse::<ImplItemFn>(item.clone()) {
         // only instrument if both `env` and requested param exist
-        if let Some(env_ident) = find_param_ident(&m.sig, "env") {
+        if let Some(env_ident) = find_env_ident_hybrid(&m.sig) {
             if param_exists(&m.sig, &args.arg) {
                 let call_path = if args.check_fn.segments.len() == 1 {
                     let ident = &args.check_fn.segments[0].ident;
@@ -216,21 +233,7 @@ pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
                 };
                 let arg = &args.arg;
                 let body = &m.block;
-                m.block = syn::parse_quote_spanned! { m.sig.span()=>
-                    {
-                        if !(#call_path(&#env_ident, &#arg)) {
-                            ::core::panic!(concat!(
-                                "unauthorized: ",
-                                stringify!(#call_path),
-                                "(env,",
-                                stringify!(#arg),
-                                ") failed"
-                            ));
-                        }
-                        #arg.require_auth();
-                        #body
-                    }
-                };
+                m.block = *instrument_block(body, call_path, &env_ident, arg, m.sig.span());
             } else {
                 // param not found – leave unchanged (avoid RA errors)
                 emit_warning!(
@@ -240,38 +243,36 @@ pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
                 );
             }
         } else {
-            // no `env` – leave unchanged (avoid RA errors)
-            emit_warning!(
-                m.sig.span(),
-                "skipping #[authorized_by]: no `env` parameter on `{}`; leaving unchanged",
-                m.sig.ident
-            );
+            let cands = env_type_candidates(&m.sig);
+            if cands.len() > 1 {
+                emit_warning!(
+                    m.sig.span(),
+                    "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
+                     please name the desired one `env`",
+                    m.sig.ident
+                );
+            } else {
+                emit_warning!(
+                    m.sig.span(),
+                    "skipping #[authorized_by]: no `Env` parameter on `{}`; leaving unchanged",
+                    m.sig.ident
+                );
+            }
         }
         return TokenStream::from(quote!(#m));
     }
 
     // Case 2: free function
     if let Ok(mut f) = syn::parse::<ItemFn>(item.clone()) {
-        if let Some(env_ident) = find_param_ident(&f.sig, "env") {
+        if let Some(env_ident) = find_env_ident_hybrid(&f.sig) {
             if param_exists(&f.sig, &args.arg) {
-                let call_path = { let p = &args.check_fn; quote! { #p } };
+                let call_path = {
+                    let p = &args.check_fn;
+                    quote! { #p }
+                };
                 let arg = &args.arg;
                 let body = &f.block;
-                f.block = syn::parse_quote_spanned! { f.sig.span()=>
-                    {
-                        if !(#call_path(&#env_ident, &#arg)) {
-                            ::core::panic!(concat!(
-                                "unauthorized: ",
-                                stringify!(#call_path),
-                                "(env,",
-                                stringify!(#arg),
-                                ") failed"
-                            ));
-                        }
-                        #arg.require_auth();
-                        #body
-                    }
-                };
+                f.block = instrument_block(body, call_path, &env_ident, arg, f.sig.span());
             } else {
                 emit_warning!(
                     args.arg.span(),
@@ -280,11 +281,21 @@ pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
                 );
             }
         } else {
-            emit_warning!(
-                f.sig.span(),
-                "skipping #[authorized_by]: no `env` parameter on `{}`; leaving unchanged",
-                f.sig.ident
-            );
+            let cands = env_type_candidates(&f.sig);
+            if cands.len() > 1 {
+                emit_warning!(
+                    f.sig.span(),
+                    "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
+                     please name the desired one `env`",
+                    f.sig.ident
+                );
+            } else {
+                emit_warning!(
+                    f.sig.span(),
+                    "skipping #[authorized_by]: no `Env` parameter on `{}`; leaving unchanged",
+                    f.sig.ident
+                );
+            }
         }
         return TokenStream::from(quote!(#f));
     }
@@ -293,9 +304,9 @@ pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
-/// Apply to an `impl` block (or inline `mod`).
+/// Apply to an `impl` block.
 /// Instruments #[authorized_by(...)] in place and removes the attribute;
-/// then enforces that public-ish functions have either #[no_access_control]
+/// then enforces that public functions have either #[no_access_control]
 /// or #[authorized_by(...)].
 #[proc_macro_error]
 #[proc_macro_attribute]
@@ -318,13 +329,13 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     .iter()
                     .any(|a| a.path().is_ident("contractimpl"));
 
-                let is_publicish = is_trait_impl
+                let is_public = is_trait_impl
                     || has_contractimpl_attr
                     || !matches!(m.vis, Visibility::Inherited);
 
                 let has_no_access = has_no_access_attr(&m.attrs);
 
-                if is_publicish && !(had_authorized || has_no_access) {
+                if is_public && !(had_authorized || has_no_access) {
                     emit_error!(
                         m.sig.ident.span(),
                         "public method {} is missing #[no_access_control] or #[authorized_by(...)]",
@@ -337,47 +348,8 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
         return TokenStream::from(quote!(#impl_block));
     }
 
-    // inline module path
-    if let Ok(mut module) = syn::parse::<ItemMod>(item.clone()) {
-        if let Some((_, items)) = &mut module.content {
-            for it in items {
-                if let Item::Fn(f) = it {
-                    let mut f = f;
-                    let mut had_authorized = false;
-
-                    let mut attrs = std::mem::take(&mut f.attrs);
-                    if let Some(args) = take_authorized_args(&mut attrs) {
-                        if try_instrument_free_fn(&mut f, &args).is_some() {
-                            had_authorized = true;
-                        }
-                    }
-                    f.attrs = attrs;
-
-                    let is_publicish = !matches!(f.vis, Visibility::Inherited);
-                    let has_no_access = has_no_access_attr(&f.attrs);
-
-                    if is_publicish && !(had_authorized || has_no_access) {
-                        emit_error!(
-                            f.sig.ident.span(),
-                            "public function {} is missing #[no_access_control] or #[authorized_by(...)]",
-                            f.sig.ident
-                        );
-                    }
-                }
-            }
-            abort_if_dirty();
-            return TokenStream::from(quote!(#module));
-        }
-
-        abort!(
-            module.ident.span(),
-            "#[access_control] cannot be used on external modules; \
-             use it on an `impl` block or an inline `mod`."
-        );
-    }
-
     abort!(
         Span::call_site(),
-        "#[access_control] must be placed on an `impl` block or an inline `mod`."
+        "#[access_control] must be placed on an `impl` block."
     );
 }

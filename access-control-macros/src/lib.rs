@@ -15,19 +15,17 @@
 //!     * Syntax-only attribute when used standalone (left in place); instrumentation is performed
 //!       locally by `#[access_control]` so expansion order with other macros stays predictable.
 
-
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
+use std::collections::BTreeSet;
 use syn::{
     parse::{Parse, ParseStream},
     spanned::Spanned,
-    Attribute, FnArg, ImplItem, ItemImpl, Meta, Pat, Path, Token, Type,
-    Visibility,
+    Attribute, FnArg, ImplItem, ItemImpl, Meta, Pat, Path, Token, Type, Visibility,
 };
-use std::collections::BTreeSet;
 
 use proc_macro_error::{abort, abort_if_dirty, emit_error, emit_warning, proc_macro_error};
 
@@ -72,7 +70,9 @@ fn env_type_candidates(sig: &syn::Signature) -> Vec<syn::Ident> {
     let mut out = Vec::new();
     for arg in &sig.inputs {
         let FnArg::Typed(pat_ty) = arg else { continue };
-        let Pat::Ident(pat_ident) = &*pat_ty.pat else { continue };
+        let Pat::Ident(pat_ident) = &*pat_ty.pat else {
+            continue;
+        };
 
         // peel references like &Env
         let mut ty: &Type = &*pat_ty.ty;
@@ -144,7 +144,6 @@ fn instrument_block_multi(
     }
 }
 
-
 /// 1) Finds and removes the instances of #[authorized_by(...)] in attrs,
 /// 2) parses it into AuthorizedArgs and pushes it to the output vector,
 /// 3) returns the output vector contained the authorizaed args (or None if malformed attr).
@@ -175,7 +174,6 @@ fn take_all_authorized_args(attrs: &mut Vec<Attribute>) -> Vec<AuthorizedArgs> {
     }
     out
 }
-
 
 fn build_call_path(check_fn: &Path, use_self: bool) -> TokenStream2 {
     if use_self && check_fn.segments.len() == 1 {
@@ -263,7 +261,7 @@ fn instrument_impl_like_multi(
 #[proc_macro_attribute]
 pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Validate syntax but do not instrument here. This is because when evaluating multiple authorized_by attributes
-    // it can cause issues of double instrumentation when #[access_control] processes it later. To avoid any ugly errors 
+    // it can cause issues of double instrumentation when #[access_control] processes it later. To avoid any ugly errors
     // and enforced policies in a single location, the macro instrumentation is uniformly handled through access_control
     if let Err(e) = syn::parse::<AuthorizedArgs>(attr) {
         emit_error!(e.span(), "malformed #[authorized_by(..)]: {}", e);
@@ -294,7 +292,13 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 // If we have any authorized_by(..), instrument with *all* predicates
                 let mut had_authorized = false;
                 if !auth_args.is_empty() {
-                    if instrument_impl_like_multi(&m.sig, &mut m.block, &m.sig.ident, &auth_args, true) {
+                    if instrument_impl_like_multi(
+                        &m.sig,
+                        &mut m.block,
+                        &m.sig.ident,
+                        &auth_args,
+                        true,
+                    ) {
                         had_authorized = true;
                     }
                 }

@@ -6,8 +6,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 #[contracttype]
 pub enum DataKey {
     Counter(Address),
-    Owner, // owner of the program
-    SuperOwner // super admin
+    Owner,      // owner of the program
+    SuperOwner, // super admin
 }
 
 // Methods that we do not want to be public
@@ -50,10 +50,12 @@ impl IncrementContract {
         // Ensure the declared owner actually authorized this init call.
         super_owner.require_auth();
 
-        env.storage().persistent().set(&DataKey::SuperOwner, &super_owner);
+        env.storage()
+            .persistent()
+            .set(&DataKey::SuperOwner, &super_owner);
     }
 
-    // Example of a protected method that requires two #[authorized_by] guards to be fulfilled. The macro will inject: 
+    // Example of a protected method that requires two #[authorized_by] guards to be fulfilled. The macro will inject:
     // i) only_owner(&env, &caller) && caller.require_auth()
     // ii) only_super_owner(&env, &caller) && caller.require_auth()
     #[authorized_by(caller, only_owner)]
@@ -77,7 +79,11 @@ impl IncrementContract {
     #[authorized_by(user, only_owner)]
     pub fn increment_owner(environment: Env, user: Address, value: u32) -> u32 {
         let key = DataKey::Counter(user.clone());
-        let mut count: u32 = environment.storage().persistent().get(&key).unwrap_or_default();
+        let mut count: u32 = environment
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_default();
         count += value;
         environment.storage().persistent().set(&key, &count);
         count

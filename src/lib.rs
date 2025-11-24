@@ -1,4 +1,5 @@
 #![no_std]
+#[allow(unused_imports)]
 use access_control_macros::{access_control, authorized_by, no_access_control};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
@@ -6,6 +7,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 pub enum DataKey {
     Counter(Address),
     Owner, // owner of the program
+    SuperOwner // super admin
 }
 
 // Methods that we do not want to be public
@@ -17,6 +19,11 @@ impl IncrementContract {
     fn only_owner(env: &Env, user: &Address) -> bool {
         let stored: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
         matches!(stored, Some(ref owner) if owner == user)
+    }
+
+    fn only_super_owner(env: &Env, user: &Address) -> bool {
+        let stored: Option<Address> = env.storage().persistent().get(&DataKey::SuperOwner);
+        matches!(stored, Some(ref super_owner) if super_owner == user)
     }
 }
 
@@ -35,9 +42,22 @@ impl IncrementContract {
         env.storage().persistent().set(&DataKey::Owner, &owner);
     }
 
-    // 2) Example of a protected method that only the owner can call.
-    //    Your #[authorized_by] macro will inject: only_owner(&env, &caller) && caller.require_auth()
+    #[no_access_control]
+    pub fn initialize_super_owner(env: Env, super_owner: Address) {
+        if env.storage().persistent().has(&DataKey::SuperOwner) {
+            panic!("already initialized");
+        }
+        // Ensure the declared owner actually authorized this init call.
+        super_owner.require_auth();
+
+        env.storage().persistent().set(&DataKey::SuperOwner, &super_owner);
+    }
+
+    // Example of a protected method that requires two #[authorized_by] guards to be fulfilled. The macro will inject: 
+    // i) only_owner(&env, &caller) && caller.require_auth()
+    // ii) only_super_owner(&env, &caller) && caller.require_auth()
     #[authorized_by(caller, only_owner)]
+    #[authorized_by(caller, only_super_owner)]
     pub fn change_owner(env: Env, caller: Address, new_owner: Address) {
         env.storage().persistent().set(&DataKey::Owner, &new_owner);
     }
@@ -53,13 +73,13 @@ impl IncrementContract {
     }
 
     /// Uses the macro guard: Self::only_owner(&env, &user) + user.require_auth()
-    // #[no_access_control]
+    /// Note: here the env is identified by type `Env` instead of the name `env`
     #[authorized_by(user, only_owner)]
-    pub fn increment_owner(env2: Env, user: Address, value: u32) -> u32 {
+    pub fn increment_owner(environment: Env, user: Address, value: u32) -> u32 {
         let key = DataKey::Counter(user.clone());
-        let mut count: u32 = env2.storage().persistent().get(&key).unwrap_or_default();
+        let mut count: u32 = environment.storage().persistent().get(&key).unwrap_or_default();
         count += value;
-        env2.storage().persistent().set(&key, &count);
+        environment.storage().persistent().set(&key, &count);
         count
     }
 }

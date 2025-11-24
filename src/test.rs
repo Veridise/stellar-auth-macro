@@ -64,6 +64,26 @@ fn test_increment_owner_auth() {
 }
 
 #[test]
+fn test_change_owner_multi_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IncrementContract, ());
+    let client = IncrementContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+
+    // Set the owner once during deployment/init.
+    client.initialize(&owner);
+    client.initialize_super_owner(&owner);
+
+    let new_owner = Address::generate(&env);
+    // This should be successful since owner and super owner are same.
+    // Therefore the address is authorized to call increment_owner()
+    client.change_owner(&owner, &new_owner);
+}
+
+#[test]
 #[should_panic(expected = "unauthorized")]
 fn test_increment_owner_auth_denied_should_panic() {
     let env = Env::default();
@@ -80,4 +100,25 @@ fn test_increment_owner_auth_denied_should_panic() {
 
     // This should panic due to the caller not fulfilling onlyOwner() requirements.
     client.increment_owner(&other, &1);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_change_owner_multi_auth_denied_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(IncrementContract, ());
+    let client = IncrementContractClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let super_owner = Address::generate(&env);
+
+    // Set the owner once during deployment/init.
+    client.initialize(&owner);
+    client.initialize_super_owner(&super_owner);
+
+    let new_owner = Address::generate(&env);
+    // This should note be successful since owner and super owner are different
+    client.change_owner(&owner, &new_owner);
 }

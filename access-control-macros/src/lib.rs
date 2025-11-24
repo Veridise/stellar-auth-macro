@@ -17,7 +17,7 @@ use quote::quote;
 use syn::{
     parse::{Parse, ParseStream},
     spanned::Spanned,
-    Attribute, FnArg, ImplItem, ImplItemFn, Item, ItemFn, ItemImpl, Meta, Pat, Path, Token, Type,
+    Attribute, FnArg, ImplItem, ImplItemFn, ItemFn, ItemImpl, Meta, Pat, Path, Token, Type,
     Visibility,
 };
 
@@ -37,6 +37,8 @@ struct AuthorizedArgs {
     arg: syn::Ident,
     check_fn: Path,
 }
+
+/// The parser enforces the format: `<ident> , <path>`.
 impl Parse for AuthorizedArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let arg: syn::Ident = input.parse()?;
@@ -46,34 +48,20 @@ impl Parse for AuthorizedArgs {
     }
 }
 
-fn ident_eq(a: &syn::Ident, b: &syn::Ident) -> bool {
-    a.to_string() == b.to_string()
-}
-
-fn param_exists(sig: &syn::Signature, want: &syn::Ident) -> bool {
-    sig.inputs.iter().any(|arg| match arg {
-        FnArg::Typed(pat_ty) => {
-            if let Pat::Ident(p) = &*pat_ty.pat {
-                ident_eq(&p.ident, want)
-            } else {
-                false
-            }
-        }
-        FnArg::Receiver(_) => false,
+/// Iterates over the function signature's arguments and returns the "desired" parameter, if it exists.
+fn find_param_ident(sig: &syn::Signature, desired: &str) -> Option<syn::Ident> {
+    sig.inputs.iter().find_map(|arg| match arg {
+        FnArg::Typed(pat_ty) => match &*pat_ty.pat {
+            Pat::Ident(p) if p.ident == desired => Some(p.ident.clone()),
+            _ => None,
+        },
+        FnArg::Receiver(_) => None, // skip for 'self'
     })
 }
 
-fn find_param_ident(sig: &syn::Signature, name: &str) -> Option<syn::Ident> {
-    for arg in &sig.inputs {
-        if let FnArg::Typed(pat_ty) = arg {
-            if let Pat::Ident(pat) = &*pat_ty.pat {
-                if pat.ident == name {
-                    return Some(pat.ident.clone());
-                }
-            }
-        }
-    }
-    None
+/// Returns true if desired parameter exists within the function signature.
+fn param_exists(sig: &syn::Signature, desired: &syn::Ident) -> bool {
+    find_param_ident(sig, &desired.to_string()).is_some()
 }
 
 /// Return the parameter identifiers whose *spelled* type is `Env` (or `&Env`, or `soroban_sdk::Env`).
@@ -115,6 +103,10 @@ fn find_env_ident_hybrid(sig: &syn::Signature) -> Option<syn::Ident> {
     }
 }
 
+/// Returns a boxed block that:
+/// 1) runs the predicate,
+/// 2) calls `require_auth()` on the subject,
+/// 3) then executes the original body.
 fn instrument_block(
     body: &syn::Block,
     call_path: TokenStream2,
@@ -139,6 +131,9 @@ fn instrument_block(
     }
 }
 
+/// 1) Finds and removes the first #[authorized_by(...)] in attrs,
+/// 2) parses it into AuthorizedArgs,
+/// 3) returns Some(args) (or None if malformed attr).
 fn take_authorized_args(attrs: &mut Vec<Attribute>) -> Option<AuthorizedArgs> {
     let idx = attrs.iter().position(|a| a.path().is_ident("authorized_by"))?;
     let attr = attrs.remove(idx);
@@ -160,57 +155,76 @@ fn take_authorized_args(attrs: &mut Vec<Attribute>) -> Option<AuthorizedArgs> {
     }
 }
 
-fn try_instrument_method(m: &mut ImplItemFn, args: &AuthorizedArgs) -> Option<()> {
-    if !param_exists(&m.sig, &args.arg) {
-        emit_warning!(
-            args.arg.span(),
-            "skipping #[authorized_by]: parameter `{}` not found on `{}` (generated wrapper?)",
-            args.arg,
-            m.sig.ident
-        );
-        return None;
-    }
-    let env_ident = match find_env_ident_hybrid(&m.sig) {
-        Some(id) => id,
-        None => {
-            // See if we can give a better hint (ambiguous vs missing) for ergonomics
-            let cands = env_type_candidates(&m.sig);
-            if cands.len() > 1 {
-                emit_warning!(
-                    m.sig.span(),
-                    "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
-                     please name the desired one `env`",
-                    m.sig.ident
-                );
-            } else {
-                emit_warning!(
-                    m.sig.span(),
-                    "skipping #[authorized_by]: no `Env` parameter found on `{}`; leaving unchanged",
-                    m.sig.ident
-                );
-            }
-            return None;
-        }
-    };
-    let call_path = if args.check_fn.segments.len() == 1 {
-        let ident = &args.check_fn.segments[0].ident;
+fn build_call_path(check_fn: &Path, use_self: bool) -> TokenStream2 {
+    if use_self && check_fn.segments.len() == 1 {
+        let ident = &check_fn.segments[0].ident;
         quote! { Self::#ident }
     } else {
-        let p = &args.check_fn;
+        let p = check_fn;
         quote! { #p }
-    };
-    let arg = &args.arg;
-    let body = &m.block;
-    m.block = *instrument_block(body, call_path, &env_ident, arg, m.sig.span());
-    Some(())
+    }
 }
 
-/// Standalone attribute. Never errors on placement: falls back to no-op
-/// so rust-analyzer expansion order doesn't spam diagnostics.
+fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<syn::Ident> {
+    if let Some(id) = find_env_ident_hybrid(sig) {
+        return Some(id);
+    }
+    let cands = env_type_candidates(sig);
+    if cands.len() > 1 {
+        emit_warning!(
+            sig.span(),
+            "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
+             please name the desired one `env`",
+            fn_name
+        );
+    } else {
+        emit_warning!(
+            sig.span(),
+            "skipping #[authorized_by]: no `Env` parameter found on `{}`; leaving unchanged",
+            fn_name
+        );
+    }
+    None
+}
+
+fn ensure_param_or_warn(sig: &syn::Signature, fn_name: &syn::Ident, desired: &syn::Ident) -> bool {
+    if param_exists(sig, desired) {
+        return true;
+    }
+    emit_warning!(
+        desired.span(),
+        "skipping #[authorized_by]: parameter `{}` not found on `{}` (generated wrapper?)",
+        desired,
+        fn_name
+    );
+    false
+}
+
+///
+fn instrument_impl_like(
+    sig: &syn::Signature,
+    block: &mut syn::Block,
+    fn_name: &syn::Ident,
+    args: &AuthorizedArgs,
+    use_self: bool,
+) -> bool {
+    if !ensure_param_or_warn(sig, fn_name, &args.arg) {
+        return false;
+    }
+    let env_ident = match get_env_ident_or_warn(sig, fn_name) {
+        Some(e) => e,
+        None => return false,
+    };
+    let call_path = build_call_path(&args.check_fn, use_self);
+    let arg = &args.arg;
+    let body = &*block; // borrow before replace
+    *block = *instrument_block(body, call_path, &env_ident, arg, sig.span());
+    true
+}
+
 #[proc_macro_error]
 #[proc_macro_attribute]
 pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
-    // Parse args; if malformed, that's a real error.
     let args = match syn::parse::<AuthorizedArgs>(attr) {
         Ok(a) => a,
         Err(e) => {
@@ -219,106 +233,36 @@ pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
 
-    // Case 1: method inside an `impl`
+    // impl method path
     if let Ok(mut m) = syn::parse::<ImplItemFn>(item.clone()) {
-        // only instrument if both `env` and requested param exist
-        if let Some(env_ident) = find_env_ident_hybrid(&m.sig) {
-            if param_exists(&m.sig, &args.arg) {
-                let call_path = if args.check_fn.segments.len() == 1 {
-                    let ident = &args.check_fn.segments[0].ident;
-                    quote! { Self::#ident }
-                } else {
-                    let p = &args.check_fn;
-                    quote! { #p }
-                };
-                let arg = &args.arg;
-                let body = &m.block;
-                m.block = *instrument_block(body, call_path, &env_ident, arg, m.sig.span());
-            } else {
-                // param not found – leave unchanged (avoid RA errors)
-                emit_warning!(
-                    args.arg.span(),
-                    "skipping #[authorized_by]: parameter `{}` not found on `{}`; leaving unchanged",
-                    args.arg, m.sig.ident
-                );
-            }
-        } else {
-            let cands = env_type_candidates(&m.sig);
-            if cands.len() > 1 {
-                emit_warning!(
-                    m.sig.span(),
-                    "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
-                     please name the desired one `env`",
-                    m.sig.ident
-                );
-            } else {
-                emit_warning!(
-                    m.sig.span(),
-                    "skipping #[authorized_by]: no `Env` parameter on `{}`; leaving unchanged",
-                    m.sig.ident
-                );
-            }
-        }
+        let _ = instrument_impl_like(&m.sig, &mut m.block, &m.sig.ident, &args, /*use_self=*/ true);
         return TokenStream::from(quote!(#m));
     }
 
-    // Case 2: free function
+    // free function path
     if let Ok(mut f) = syn::parse::<ItemFn>(item.clone()) {
-        if let Some(env_ident) = find_env_ident_hybrid(&f.sig) {
-            if param_exists(&f.sig, &args.arg) {
-                let call_path = {
-                    let p = &args.check_fn;
-                    quote! { #p }
-                };
-                let arg = &args.arg;
-                let body = &f.block;
-                f.block = instrument_block(body, call_path, &env_ident, arg, f.sig.span());
-            } else {
-                emit_warning!(
-                    args.arg.span(),
-                    "skipping #[authorized_by]: parameter `{}` not found on function `{}`; leaving unchanged",
-                    args.arg, f.sig.ident
-                );
-            }
-        } else {
-            let cands = env_type_candidates(&f.sig);
-            if cands.len() > 1 {
-                emit_warning!(
-                    f.sig.span(),
-                    "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
-                     please name the desired one `env`",
-                    f.sig.ident
-                );
-            } else {
-                emit_warning!(
-                    f.sig.span(),
-                    "skipping #[authorized_by]: no `Env` parameter on `{}`; leaving unchanged",
-                    f.sig.ident
-                );
-            }
-        }
+        let _ = instrument_impl_like(&f.sig, &mut f.block, &f.sig.ident, &args, /*use_self=*/ false);
         return TokenStream::from(quote!(#f));
     }
 
-    // Not a function/method → just return unchanged (no error).
+    // Not a function/method → no-op
     item
 }
 
-/// Apply to an `impl` block.
+/// Apply to an `contractimpl` block.
 /// Instruments #[authorized_by(...)] in place and removes the attribute;
 /// then enforces that public functions have either #[no_access_control]
 /// or #[authorized_by(...)].
 #[proc_macro_error]
 #[proc_macro_attribute]
 pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // impl block path
     if let Ok(mut impl_block) = syn::parse::<ItemImpl>(item.clone()) {
         for it in &mut impl_block.items {
             if let ImplItem::Fn(m) = it {
                 // instrument & strip #[authorized_by(...)] if present
                 let mut had_authorized = false;
                 if let Some(args) = take_authorized_args(&mut m.attrs) {
-                    if try_instrument_method(m, &args).is_some() {
+                    if instrument_impl_like(&m.sig, &mut m.block, &m.sig.ident, &args, true) {
                         had_authorized = true;
                     }
                 }

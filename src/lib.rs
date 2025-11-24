@@ -53,12 +53,13 @@ impl IncrementContract {
     }
 
     /// Uses the macro guard: Self::only_owner(&env, &user) + user.require_auth()
+    #[no_access_control]
     #[authorized_by(user, only_owner)]
-    pub fn increment_owner(env: Env, user: Address, value: u32) -> u32 {
+    pub fn increment_owner(env2: Env, user: Address, value: u32) -> u32 {
         let key = DataKey::Counter(user.clone());
-        let mut count: u32 = env.storage().persistent().get(&key).unwrap_or_default();
+        let mut count: u32 = env2.storage().persistent().get(&key).unwrap_or_default();
         count += value;
-        env.storage().persistent().set(&key, &count);
+        env2.storage().persistent().set(&key, &count);
         count
     }
 }

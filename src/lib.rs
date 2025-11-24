@@ -53,7 +53,7 @@ impl IncrementContract {
     }
 
     /// Uses the macro guard: Self::only_owner(&env, &user) + user.require_auth()
-    #[no_access_control]
+    // #[no_access_control]
     #[authorized_by(user, only_owner)]
     pub fn increment_owner(env2: Env, user: Address, value: u32) -> u32 {
         let key = DataKey::Counter(user.clone());

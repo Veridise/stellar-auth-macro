@@ -7,8 +7,6 @@ Veridise security experts.
 
 # Before applying the crate
 
-Access control is implicit and easy to overlook.
-
 In this version, access control is implicit and easy to overlook.
 
 ```rust
@@ -96,10 +94,11 @@ use access_control_macros::{access_control, no_access_control, authorized_by};
 
 Annotate your contract  implementation with `#[access_control]` placed
 above  `#[contractimpl]`. This  order  ensures the  guard code  is
-injected  before  Soroban  generates  client stubs.  
+injected  before  Soroban  generates  client stubs.
+
 
 For    each    public   entrypoint,    mark    it    as   open    with
-`#[no_access_control]`   (no  guard   injected),  or   protected  with
-`#[authorized_by(arg,  predicate)]`  (the  macro injects  a  predicate
-check and `require_auth()` on the specified argument). See the example
+`#[no_access_control]` - no  guard   injected,  or   protected  with
+`#[authorized_by(arg,  predicate)]` - the  macro injects  a  predicate
+check and `require_auth()` on the specified argument. See the example
 above.

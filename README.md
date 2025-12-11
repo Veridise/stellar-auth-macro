@@ -42,7 +42,8 @@ impl MyContract {
 
     #[authorized_by(caller, only_owner)]
     pub fn change_owner(env: Env, caller: Address, new_owner: Address) {
-        env.storage().persistent().set(&DataKey::Owner, &new_owner);
+        // `only_owner(caller)` check has to pass before this function executes
+        // ...
     }
 }
 

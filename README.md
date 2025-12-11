@@ -82,7 +82,7 @@ Add the macros  crate to your project, then import  the attributes. In
 
 ```toml
 # Cargo.toml
-[dependencies]****
+[dependencies]
 soroban-sdk = { version = "23.0.1" }
 access_control_macros = { git = "https://github.com/Veridise/stellar-auth-macro.git", rev = "abcdef1" }
 ```
@@ -94,9 +94,11 @@ use access_control_macros::{access_control, no_access_control, authorized_by};
 ```
 
 Annotate your contract  implementation with `#[access_control]` placed
-**above**  `#[contractimpl]`. This  order  ensures the  guard code  is
-injected  before  Soroban  generates  client stubs.  For  each  public
-entrypoint,  mark it  as  open with  `#[no_access_control]` (no  guard
-injected), or  protected with `#[authorized_by(arg,  predicate)]` (the
-macro injects a predicate check  and `require_auth()` on the specified
-argument). See the example above.
+above  `#[contractimpl]`. This  order  ensures the  guard code  is
+injected  before  Soroban  generates  client stubs.  
+
+For    each    public   entrypoint,    mark    it    as   open    with
+`#[no_access_control]`   (no  guard   injected),  or   protected  with
+`#[authorized_by(arg,  predicate)]`  (the  macro injects  a  predicate
+check and `require_auth()` on the specified argument). See the example
+above.

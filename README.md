@@ -103,7 +103,7 @@ For    each    public   entrypoint,    mark    it    as   open    with
 check and `require_auth()` on the specified argument. See the example
 above.
 
-# DISCLAIMER
+# Disclaimer
 
 This software  is provided "as is"  and without any warranties  of any
 kind, whether express or implied. While reasonable care has been taken

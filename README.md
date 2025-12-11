@@ -102,3 +102,16 @@ For    each    public   entrypoint,    mark    it    as   open    with
 `#[authorized_by(arg,  predicate)]` - the  macro injects  a  predicate
 check and `require_auth()` on the specified argument. See the example
 above.
+
+# DISCLAIMER
+
+This software  is provided "as is"  and without any warranties  of any
+kind, whether express or implied. While reasonable care has been taken
+in  its design  and development,  no guarantee  is made  regarding its
+security,  correctness, or  fitness  for any  particular purpose.   By
+using this code, you acknowledge that you  do so at your own risk, and
+that the  authors, contributors,  and maintainers assume  no liability
+for any damages, losses, or security incidents that may arise from its
+use, misuse,  or inability  to function as  intended.  It  is strongly
+recommended  to conduct  independent  security  reviews, testing,  and
+validation before deploying this software in production environments.

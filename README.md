@@ -9,26 +9,15 @@ Veridise security experts.
 
 Access control is implicit and easy to overlook.
 
-```rust
-use access_control_macros::{access_control, no_access_control, authorized_by};
-```
-
-Annotate your contract implementation with `#[access_control]` placed **above** `#[contractimpl]`. This order ensures the guard code is injected before Soroban generates client stubs. For each public entrypoint, mark it as open with `#[no_access_control]` (no guard injected), or protected with `#[authorized_by(arg, predicate)]` (the macro injects a predicate check and `require_auth()` on the specified argument). A minimal example looks like this:
+In this version, access control is implicit and easy to overlook.
 
 ```rust
-#[access_control]
 #[contractimpl]
 impl MyContract {
-    // Open endpoint — no guard injected.
-    #[no_access_control]
     pub fn balance_of(env: Env, user: Address) -> u128 {
         // ...
     }
 
-    // Protected endpoint — macro injects at the top:
-    //   if !Self::only_owner(&env, &caller) { panic!("unauthorized: ...") }
-    //   caller.require_auth();
-    #[authorized_by(caller, only_owner)]
     pub fn change_owner(env: Env, caller: Address, new_owner: Address) {
         // ...
     }
@@ -46,40 +35,6 @@ under what conditions.
 #[contractimpl]
 impl MyContract {
 
-* With this order, `access_control` instruments your methods **first**, strips `#[authorized_by(..)]`, and hands a clean, already-guarded `impl` to `#[contractimpl]`.
-* If you reverse the order, `contractimpl` might synthesize wrappers and the original `#[authorized_by(..)]` could land on a non-function item. To avoid noisy analyzer errors, the standalone `#[authorized_by]` attribute in this crate is tolerant: if it doesn’t see a function/method shape (or required params), it simply leaves the item unchanged and warns at most. Still, the **recommended** order is `#[access_control]` then `#[contractimpl]`.
-
-### Predicates: what they must look like
-
-Write your predicate to be **deterministic** and **read-only**: no storage writes, no auth calls, and no non-determinism. The macro expects the signature:
-
-```rust
-fn predicate(env: &Env, who: &Address) -> bool
-```
-
-It can be:
-
-* an inherent method on the same type (e.g. `fn only_owner(&Env, &Address) -> bool`), referenced as `only_owner` (the macro rewrites to `Self::only_owner`), or
-* any path like `crate::auth::is_admin`.
-
-Calling `require_auth()` inside the predicate is *not* necessary; the macro injects that **after** the predicate check passes. Typically, predicates should answer only “is this address allowed, given the current on-chain state?”
-
-### External modules are ignored (by design)
-
-`#[access_control]` works on:
-
-* an `impl` block, or
-* an **inline** `mod` (the content is present in the same file).
-
-If you put it on an **external** module (declared with `mod x;` and defined elsewhere), the macro **cannot** inspect the contents. In that case it raises a hard error. Therefore to use the access control macro, use it directly on the `impl` (or inline the module).
-
-### Macro expansion: Before and After
-
-Before:
-
-```rust
-impl MyContract {
-    // open entrypoint
     #[no_access_control]
     pub fn balance_of(env: Env, user: Address) -> u128 {
         // ...
@@ -87,22 +42,18 @@ impl MyContract {
 
     #[authorized_by(caller, only_owner)]
     pub fn change_owner(env: Env, caller: Address, new_owner: Address) {
-        // ...
+        env.storage().persistent().set(&DataKey::Owner, &new_owner);
     }
 }
-```
 
-After `#[access_control]`:
-
-```rust
 impl MyContract {
     // Predicate used by authorized_by()
     fn only_owner(env: &Env, who: &Address) -> bool {
-        env.storage().persistent().get::<_, Address>(&DataKey::Owner)
+        env.storage()
+            .persistent()
+            .get::<_, Address>(&DataKey::Owner)
             .map_or(false, |owner| &owner == who)
     }
-
-    fn is_owner(env: &Env, user: &Address) -> bool { /* unchanged */ }
 }
 ```
 

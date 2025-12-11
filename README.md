@@ -1,11 +1,11 @@
-## Overview
+# Overview
 
 This crate  provides a  **simple, explicit  access-control mechanism**
 for  Stellar/Soroban contracts,  removing the  need for  ad-hoc checks
 scattered throughout  the codebase.  It  was developed and  audited by
 Veridise security experts.
 
-## Before applying the crate
+# Before applying the crate
 
 Access control is implicit and easy to overlook.
 
@@ -24,7 +24,7 @@ impl MyContract {
 }
 ```
 
-## After applying the crate
+# After applying the crate
 
 After applying this crate, access control becomes explicit and self-documenting.
 Each public function clearly states whether it is unrestricted or protected, and
@@ -58,16 +58,7 @@ impl MyContract {
 }
 ```
 
-## How it works
-The macro injects both of the following for every function marked as authorized:
-- the authorization predicate check
-- the required `require_auth()` call
-
-The build fails at compile time if any public function in the `impl` block is missing either:
-- an authorization `#[authorized_by(user, predicate)]` annotation, or
-- an explicit `#[no_access_control]` marker
-
-## Why this matters
+# Why this matters
 - Developers are protected from accidentally introducing unguarded privileged functions.
 - Access-control mistakes surface at compile time, rather than silently at runtime.
 - Security auditors can reason about the authorization model quickly, with
@@ -75,6 +66,15 @@ The build fails at compile time if any public function in the `impl` block is mi
 
 *In short, this crate turns access control from an implicit convention into an
 explicit, enforceable contract.*
+
+# How it works
+The macro injects both of the following for every function marked as authorized:
+- the authorization predicate check
+- the required `require_auth()` call
+
+The build fails at compile time if any public function in the `impl` block is missing either:
+- an authorization `#[authorized_by(user, predicate)]` annotation, or
+- an explicit `#[no_access_control]` marker
 
 # Usage
 

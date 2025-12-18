@@ -119,6 +119,6 @@ fn test_change_owner_multi_auth_denied_should_panic() {
     client.initialize_super_owner(&super_owner);
 
     let new_owner = Address::generate(&env);
-    // This should note be successful since owner and super owner are different
+    // This should not be successful since the owner and super owner are different
     client.change_owner(&owner, &new_owner);
 }

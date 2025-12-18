@@ -146,7 +146,7 @@ fn instrument_block_multi(
 
 /// 1) Finds and removes the instances of #[authorized_by(...)] in attrs,
 /// 2) parses it into AuthorizedArgs and pushes it to the output vector,
-/// 3) returns the output vector contained the authorizaed args (or None if malformed attr).
+/// 3) returns the output vector containing the authorized args (or None if malformed attrs).
 fn take_all_authorized_args(attrs: &mut Vec<Attribute>) -> Vec<AuthorizedArgs> {
     let mut out = Vec::new();
     let mut i = 0;

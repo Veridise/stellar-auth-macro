@@ -16,7 +16,7 @@ fn test_increment_auth() {
 
     let owner = Address::generate(&env);
 
-    let contract_id = env.register(IncrementContract, (&owner, ));
+    let contract_id = env.register(IncrementContract, (&owner,));
     let client = IncrementContractClient::new(&env, &contract_id);
 
     let user_1 = Address::generate(&env);
@@ -55,8 +55,7 @@ fn test_increment_owner_auth() {
 
     let owner = Address::generate(&env);
 
-
-    let contract_id = env.register(IncrementContract, (&owner, ));
+    let contract_id = env.register(IncrementContract, (&owner,));
     let client = IncrementContractClient::new(&env, &contract_id);
 
     // Set the owner once during deployment/init.
@@ -97,9 +96,8 @@ fn test_increment_owner_auth_denied_should_panic() {
     let owner = Address::generate(&env);
     let other = Address::generate(&env);
 
-    let contract_id = env.register(IncrementContract, (&owner, ));
+    let contract_id = env.register(IncrementContract, (&owner,));
     let client = IncrementContractClient::new(&env, &contract_id);
-
 
     // Initialize sets the expected owner.
     // client.initialize(&owner);
@@ -117,7 +115,7 @@ fn test_change_owner_multi_auth_denied_should_panic() {
     let owner = Address::generate(&env);
     let manager = Address::generate(&env);
 
-    let contract_id = env.register(IncrementContract, (&owner, ));
+    let contract_id = env.register(IncrementContract, (&owner,));
     let client = IncrementContractClient::new(&env, &contract_id);
 
     // Set the owner once during deployment/init.

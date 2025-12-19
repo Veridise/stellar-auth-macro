@@ -146,18 +146,22 @@ fn instrument_block_multi(
 
 /// 1) Finds and removes the instances of #[authorized_by(...)] in attrs,
 /// 2) parses it into AuthorizedArgs and pushes it to the output vector,
-/// 3) returns the output vector containing the authorized args (or None if malformed attrs).
+/// 3) returns the output vector containing the authorized args (or None for malformed attrs).
 fn take_all_authorized_args(attrs: &mut Vec<Attribute>) -> Vec<AuthorizedArgs> {
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < attrs.len() {
-        if attrs[i].path().is_ident("authorized_by") {
-            let attr = attrs.remove(i);
+    let mut kept = Vec::with_capacity(attrs.len());
+    let out: Vec<AuthorizedArgs> = attrs
+        .drain(..)
+        .filter_map(|attr| {
+            if !attr.path().is_ident("authorized_by") {
+                kept.push(attr);
+                return None;
+            }
             match attr.meta {
                 Meta::List(_) => match attr.parse_args::<AuthorizedArgs>() {
-                    Ok(a) => out.push(a),
+                    Ok(a) => Some(a),
                     Err(e) => {
                         emit_error!(attr.span(), "malformed #[authorized_by(...)] args: {}", e);
+                        None
                     }
                 },
                 _ => {
@@ -165,15 +169,15 @@ fn take_all_authorized_args(attrs: &mut Vec<Attribute>) -> Vec<AuthorizedArgs> {
                         attr.span(),
                         "#[authorized_by] must be written as #[authorized_by(arg_ident, path)]"
                     );
+                    None
                 }
             }
-            // do not i += 1 here because we just removed current slot
-        } else {
-            i += 1;
-        }
-    }
+        })
+        .collect();
+    *attrs = kept;
     out
 }
+
 
 fn build_call_path(check_fn: &Path, use_self: bool) -> TokenStream2 {
     if use_self && check_fn.segments.len() == 1 {
@@ -262,7 +266,7 @@ fn instrument_impl_like_multi(
 pub fn authorized_by(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Validate syntax but do not instrument here. This is because when evaluating multiple authorized_by attributes
     // it can cause issues of double instrumentation when #[access_control] processes it later. To avoid any ugly errors
-    // and enforced policies in a single location, the macro instrumentation is uniformly handled through access_control
+    // and enforce policies in a single location, the macro instrumentation is uniformly handled through access_control
     if let Err(e) = syn::parse::<AuthorizedArgs>(attr) {
         emit_error!(e.span(), "malformed #[authorized_by(..)]: {}", e);
     }

@@ -23,7 +23,7 @@ impl IncrementContract {
 
     fn only_manager(env: &Env, user: &Address) -> bool {
         let stored: Option<Address> = env.storage().persistent().get(&DataKey::Manager);
-        matches!(stored, Some(ref super_owner) if super_owner == user)
+        matches!(stored, Some(ref manager) if manager == user)
     }
 }
 
@@ -53,10 +53,10 @@ impl IncrementContract {
 
     // Example of a protected method that requires two #[authorized_by] guards to be fulfilled. The macro will inject:
     // i) only_owner(&env, &caller) && caller.require_auth()
-    // ii) only_super_owner(&env, &caller) && caller.require_auth()
-    #[authorized_by(caller, only_owner)]
-    #[authorized_by(caller, only_manager)]
-    pub fn change_owner(env: Env, caller: Address, new_owner: Address) {
+    // ii) only_manager(&env, &caller) && caller.require_auth()
+    #[authorized_by(owner, only_owner)]
+    #[authorized_by(manager, only_manager)]
+    pub fn change_owner(env: Env, owner: Address, manager: Address, new_owner: Address) {
         env.storage().persistent().set(&DataKey::Owner, &new_owner);
     }
 

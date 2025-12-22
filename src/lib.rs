@@ -1,11 +1,13 @@
 #![no_std]
+#[allow(unused_imports)]
 use access_control_macros::{access_control, authorized_by, no_access_control};
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
 #[contracttype]
 pub enum DataKey {
     Counter(Address),
-    Owner, // owner of the program
+    Owner,   // owner of the program
+    Manager, // manager, intended to add as a guard for transferring owner rights
 }
 
 // Methods that we do not want to be public
@@ -18,14 +20,19 @@ impl IncrementContract {
         let stored: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
         matches!(stored, Some(ref owner) if owner == user)
     }
+
+    fn only_manager(env: &Env, user: &Address) -> bool {
+        let stored: Option<Address> = env.storage().persistent().get(&DataKey::Manager);
+        matches!(stored, Some(ref manager) if manager == user)
+    }
 }
 
 #[access_control]
 #[contractimpl]
 impl IncrementContract {
-    // 1) Set owner during deployment/init (one-time).
+    // 1) Constructor to set the owner
     #[no_access_control]
-    pub fn initialize(env: Env, owner: Address) {
+    pub fn __constructor(env: Env, owner: Address) {
         if env.storage().persistent().has(&DataKey::Owner) {
             panic!("already initialized");
         }
@@ -35,10 +42,21 @@ impl IncrementContract {
         env.storage().persistent().set(&DataKey::Owner, &owner);
     }
 
-    // 2) Example of a protected method that only the owner can call.
-    //    Your #[authorized_by] macro will inject: only_owner(&env, &caller) && caller.require_auth()
     #[authorized_by(caller, only_owner)]
-    pub fn change_owner(env: Env, caller: Address, new_owner: Address) {
+    pub fn set_manager(env: Env, caller: Address, manager: Address) {
+        if env.storage().persistent().has(&DataKey::Manager) {
+            panic!("already initialized");
+        }
+
+        env.storage().persistent().set(&DataKey::Manager, &manager);
+    }
+
+    // Example of a protected method that requires two #[authorized_by] guards to be fulfilled. The macro will inject:
+    // i) only_owner(&env, &caller) && caller.require_auth()
+    // ii) only_manager(&env, &caller) && caller.require_auth()
+    #[authorized_by(owner, only_owner)]
+    #[authorized_by(manager, only_manager)]
+    pub fn change_owner(env: Env, owner: Address, manager: Address, new_owner: Address) {
         env.storage().persistent().set(&DataKey::Owner, &new_owner);
     }
 

@@ -14,7 +14,9 @@ fn test_increment_auth() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(IncrementContract, ());
+    let owner = Address::generate(&env);
+
+    let contract_id = env.register(IncrementContract, (&owner,));
     let client = IncrementContractClient::new(&env, &contract_id);
 
     let user_1 = Address::generate(&env);
@@ -51,16 +53,32 @@ fn test_increment_owner_auth() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(IncrementContract, ());
-    let client = IncrementContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
 
-    // Set the owner once during deployment/init.
-    client.initialize(&owner);
+    // Set the owner during deployment
+    let contract_id = env.register(IncrementContract, (&owner,));
+    let client = IncrementContractClient::new(&env, &contract_id);
 
     // This should be successful since owner is authorized to call increment_owner()
     assert_eq!(client.increment_owner(&owner, &5), 5);
+}
+
+#[test]
+fn test_change_owner_multi_auth() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let manager: Address = Address::generate(&env);
+
+    // Set the owner during deployment
+    let contract_id = env.register(IncrementContract, (&owner,));
+    let client = IncrementContractClient::new(&env, &contract_id);
+
+    client.set_manager(&owner, &manager);
+
+    let new_owner = Address::generate(&env);
+    // This should be successful since owner and manager both co-sign to change the manager to a new manager.
+    client.change_owner(&owner, &manager, &new_owner);
 }
 
 #[test]
@@ -69,15 +87,34 @@ fn test_increment_owner_auth_denied_should_panic() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(IncrementContract, ());
-    let client = IncrementContractClient::new(&env, &contract_id);
-
     let owner = Address::generate(&env);
     let other = Address::generate(&env);
 
-    // Initialize sets the expected owner.
-    client.initialize(&owner);
+    // Set the owner during deployment
+    let contract_id = env.register(IncrementContract, (&owner,));
+    let client = IncrementContractClient::new(&env, &contract_id);
 
     // This should panic due to the caller not fulfilling onlyOwner() requirements.
     client.increment_owner(&other, &1);
+}
+
+#[test]
+#[should_panic(expected = "unauthorized")]
+fn test_change_owner_multi_auth_denied_should_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let manager = Address::generate(&env);
+
+    // Set the owner once during deployment/init.
+    let contract_id = env.register(IncrementContract, (&owner,));
+    let client = IncrementContractClient::new(&env, &contract_id);
+
+    client.set_manager(&owner, &manager);
+
+    let new_owner = Address::generate(&env);
+    // This should not be successful since the owner and manager do not co-sign on changing the manager.
+    // In this case, the second co-sign is from the new owner, and not the manager.
+    client.change_owner(&owner, &new_owner, &new_owner);
 }

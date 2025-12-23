@@ -6,7 +6,8 @@
 //!     * Enforces policy: every public method must have **either** `#[no_access_control]` **or**
 //!       one-or-more `#[authorized_by(..)]`. Mixing both on the same method is an error.
 //!     * Detects “public” as: trait impl methods, `#[contractimpl]` methods, or methods with `pub` visibility.
-//!     * Uses hybrid `Env` resolution (prefer a parameter named `env`, else a unique `Env`-typed param).
+//!     * Uses strict `Env` resolution: requires a parameter named `env` whose type is exactly `Env` or 
+//!       `soroban_sdk::Env`(optionally by reference).
 //!
 //! - #[no_access_control] on a function:
 //!     * Marker (no-op) indicating the method is intentionally open (no guard injected).
@@ -39,6 +40,7 @@ pub fn no_access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+#[derive(Clone, Debug)]
 struct AuthorizedArgs {
     arg: syn::Ident,
     check_fn: Path,
@@ -54,42 +56,39 @@ impl Parse for AuthorizedArgs {
     }
 }
 
-/// Iterates over the function signature's arguments and returns the "desired" parameter, if it exists.
-fn find_param_ident(sig: &syn::Signature, desired: &str) -> Option<syn::Ident> {
-    sig.inputs.iter().find_map(|arg| match arg {
+/// Iterates over the function signature's arguments and returns true if the the "desired" parameter exists.
+fn param_exists(sig: &syn::Signature, desired: &syn::Ident) -> bool {
+    sig.inputs.iter().any(|arg| match arg {
         FnArg::Typed(pat_ty) => match &*pat_ty.pat {
-            Pat::Ident(p) if p.ident == desired => Some(p.ident.clone()),
-            _ => None,
+            Pat::Ident(p) => p.ident == *desired,
+            _ => false,
         },
-        FnArg::Receiver(_) => None, // skip for 'self'
+        FnArg::Receiver(_) => false,
     })
 }
-
 
 /// Env resolution (strict):
 ///  1) The parameter must be named `env`.
 ///  2) Its (possibly referenced) type must be exactly `Env` or `soroban_sdk::Env`.
-/// If no such parameter is found, return None.
-fn find_env_ident_hybrid(sig: &syn::Signature) -> Option<syn::Ident> {
-    let id = find_param_ident(sig, "env")?;
-    // Find the `env` parameter's type and check it strictly.
+///  3) If no such parameter is found, return None.
+fn find_env_ident_strict(sig: &syn::Signature) -> Option<syn::Ident> {
     for arg in &sig.inputs {
-        if let FnArg::Typed(pat_ty) = arg {
-            if let Pat::Ident(pat_ident) = &*pat_ty.pat {
-                if pat_ident.ident == id {
-                    // peel references like &Env or &soroban_sdk::Env
-                    let mut ty: &Type = &*pat_ty.ty;
-                    if let Type::Reference(r) = ty {
-                        ty = &*r.elem;
-                    }
-                    if is_strict_env_type(ty) {
-                        return Some(id);
-                    } else {
-                        return None;
-                    }
-                }
-            }
+        let FnArg::Typed(pat_ty) = arg else { continue };
+        let Pat::Ident(pat_ident) = &*pat_ty.pat else {
+            continue;
+        };
+
+        if pat_ident.ident != "env" {
+            continue;
         }
+
+        // peel references like &Env or &soroban_sdk::Env
+        let mut ty: &Type = &*pat_ty.ty;
+        if let Type::Reference(r) = ty {
+            ty = &*r.elem;
+        }
+
+        return is_strict_env_type(ty).then(|| pat_ident.ident.clone());
     }
     None
 }
@@ -131,10 +130,9 @@ fn instrument_block_multi(
 
     // Iterate and build a1.require_auth(); a2.require_auth(); ...
     // Also dedupe calls for require_auth on addresses featuring multiple times in `auths`.
-    let mut seen = BTreeSet::<String>::new();
+    let mut seen = BTreeSet::<syn::Ident>::new();
     let auths = pairs.iter().filter_map(|(_, arg)| {
-        let k = arg.to_string();
-        if seen.insert(k) {
+        if seen.insert(arg.clone()) {
             Some(quote! { #arg.require_auth(); })
         } else {
             None
@@ -197,7 +195,7 @@ fn build_call_path(check_fn: &Path, use_self: bool) -> TokenStream2 {
 }
 
 fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<syn::Ident> {
-    if let Some(id) = find_env_ident_hybrid(sig) {
+    if let Some(id) = find_env_ident_strict(sig) {
         return Some(id);
     }
 
@@ -211,9 +209,8 @@ fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<s
 
 /// Returns true if desired parameter exists within the function signature otherwise emits a warning and returns false.
 fn ensure_param_or_warn(sig: &syn::Signature, fn_name: &syn::Ident, desired: &syn::Ident) -> bool {
-    if find_param_ident(sig, &desired.to_string()).is_some() {
-        return true;
-    }
+    if param_exists(sig, desired) { return true; }
+
     emit_warning!(
         desired.span(),
         "skipping #[authorized_by]: parameter `{}` not found on `{}` (generated wrapper?)",

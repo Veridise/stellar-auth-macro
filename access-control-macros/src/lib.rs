@@ -90,18 +90,51 @@ fn env_type_candidates(sig: &syn::Signature) -> Vec<syn::Ident> {
     out
 }
 
-/// Env resolution:
-///  1) The variable must have name `env`
-///  2) Its type has to be `Env` or `&Env` or `&soroban_sdk::Env`
-/// If no such variable is found, return None
+/// Env resolution (strict):
+///  1) The parameter must be named `env`.
+///  2) Its (possibly referenced) type must be exactly `Env` or `soroban_sdk::Env`.
+/// If no such parameter is found, return None.
 fn find_env_ident_hybrid(sig: &syn::Signature) -> Option<syn::Ident> {
     let id = find_param_ident(sig, "env")?;
-    let cands = env_type_candidates(sig);
+    // Find the `env` parameter's type and check it strictly.
+    for arg in &sig.inputs {
+        if let FnArg::Typed(pat_ty) = arg {
+            if let Pat::Ident(pat_ident) = &*pat_ty.pat {
+                if pat_ident.ident == id {
+                    // peel references like &Env or &soroban_sdk::Env
+                    let mut ty: &Type = &*pat_ty.ty;
+                    if let Type::Reference(r) = ty {
+                        ty = &*r.elem;
+                    }
+                    if is_strict_env_type(ty) {
+                        return Some(id);
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    None
+}
 
-    if cands.len() == 1 && cands[0] == id {
-        return Some(id);
-    } else {
-        None
+/// Return true only for the exact types `Env` or `soroban_sdk::Env`
+/// (references should be peeled by the caller).
+fn is_strict_env_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(p) => {
+            let segs = &p.path.segments;
+            if segs.len() == 1 {
+                // Env
+                segs[0].ident == "Env"
+            } else if segs.len() == 2 {
+                // soroban_sdk::Env
+                segs[0].ident == "soroban_sdk" && segs[1].ident == "Env"
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
@@ -191,18 +224,20 @@ fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<s
     if let Some(id) = find_env_ident_hybrid(sig) {
         return Some(id);
     }
+    // For diagnostics, show what Env-typed params exist (by type-only),
+    // since the name `env` is still required.
     let cands = env_type_candidates(sig);
-    if cands.len() > 1 {
+    if !cands.is_empty() {
         emit_warning!(
             sig.span(),
-            "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
-             please name the desired one `env`",
+            "skipping #[authorized_by]: found Env-typed parameter(s) on `{}`, \
+             but strict mode requires a parameter named `env` with type `Env` or `soroban_sdk::Env`",
             fn_name
         );
     } else {
         emit_warning!(
             sig.span(),
-            "skipping #[authorized_by]: no `Env` parameter found on `{}`; leaving unchanged",
+            "skipping #[authorized_by]: no parameter named `env` with type `Env` or `soroban_sdk::Env` on `{}`",
             fn_name
         );
     }

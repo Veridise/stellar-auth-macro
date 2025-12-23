@@ -65,30 +65,6 @@ fn find_param_ident(sig: &syn::Signature, desired: &str) -> Option<syn::Ident> {
     })
 }
 
-/// Return the parameter identifiers whose *spelled* type is `Env` (or `&Env`, or `soroban_sdk::Env`).
-fn env_type_candidates(sig: &syn::Signature) -> Vec<syn::Ident> {
-    let mut out = Vec::new();
-    for arg in &sig.inputs {
-        let FnArg::Typed(pat_ty) = arg else { continue };
-        let Pat::Ident(pat_ident) = &*pat_ty.pat else {
-            continue;
-        };
-
-        // peel references like &Env
-        let mut ty: &Type = &*pat_ty.ty;
-        if let Type::Reference(r) = ty {
-            ty = &*r.elem;
-        }
-        if let Type::Path(p) = ty {
-            if let Some(seg) = p.path.segments.last() {
-                if seg.ident == "Env" {
-                    out.push(pat_ident.ident.clone());
-                }
-            }
-        }
-    }
-    out
-}
 
 /// Env resolution (strict):
 ///  1) The parameter must be named `env`.
@@ -224,23 +200,12 @@ fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<s
     if let Some(id) = find_env_ident_hybrid(sig) {
         return Some(id);
     }
-    // For diagnostics, show what Env-typed params exist (by type-only),
-    // since the name `env` is still required.
-    let cands = env_type_candidates(sig);
-    if !cands.is_empty() {
-        emit_warning!(
-            sig.span(),
-            "skipping #[authorized_by]: found Env-typed parameter(s) on `{}`, \
-             but strict mode requires a parameter named `env` with type `Env` or `soroban_sdk::Env`",
-            fn_name
-        );
-    } else {
-        emit_warning!(
-            sig.span(),
-            "skipping #[authorized_by]: no parameter named `env` with type `Env` or `soroban_sdk::Env` on `{}`",
-            fn_name
-        );
-    }
+
+    emit_warning!(
+        sig.span(),
+        "skipping #[authorized_by]: `{}` must have a parameter named `env` with type `Env` or `soroban_sdk::Env`",
+        fn_name
+    );
     None
 }
 

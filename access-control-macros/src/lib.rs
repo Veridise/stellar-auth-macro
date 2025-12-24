@@ -332,7 +332,11 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
         abort_if_dirty();
-        return TokenStream::from(quote!(#impl_block));
+        return TokenStream::from(quote! {
+            // Force `Env` to refer to `soroban_sdk::Env` and surface any name collisions.
+            use soroban_sdk::Env;
+            #impl_block
+        });
     }
 
     abort!(

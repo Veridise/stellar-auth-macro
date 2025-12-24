@@ -56,7 +56,7 @@ impl IncrementContract {
     // ii) only_manager(&env, &caller) && caller.require_auth()
     #[authorized_by(owner, only_owner)]
     #[authorized_by(manager, only_manager)]
-    pub fn change_owner(env: Env, owner: Address, manager: Address, new_owner: Address) {
+    pub fn change_owner(env: Env, owner: Address, manager: Address, new_owner: Address, env2: Env) {
         env.storage().persistent().set(&DataKey::Owner, &new_owner);
     }
 

@@ -6,9 +6,17 @@
 //!     * Enforces policy: every public method must have **either** `#[no_access_control]` **or**
 //!       one-or-more `#[authorized_by(..)]`. Mixing both on the same method is an error.
 //!     * Detects “public” as: trait impl methods, `#[contractimpl]` methods, or methods with `pub` visibility.
-//!     * Uses strict `Env` resolution: requires a parameter named `env` whose type is exactly `Env` or 
-//!       `soroban_sdk::Env`(optionally by reference).
+//!     * Uses **strict Env resolution**:
+//!         - The method must have a parameter named exactly `env`.
+//!         - That parameter’s type must be exactly `Env` or `soroban_sdk::Env` (optionally by reference).
+//!         - If this requirement is not met, instrumentation is skipped with a warning.
 //!
+//!       **Soroban note:** For `#[contractimpl]` methods, Soroban treats `Env` as the host context,
+//!       and not a normal serializable argument. Contract methods effectively support a single `Env`
+//!       parameter (typically first). Additional `Env` parameters are not supported by the generated
+//!       client interface, and will fail to compile. This macro’s strict `env: Env` requirement
+//!       matches those constraints and avoids accidental instrumentation of the wrong parameter.
+//! 
 //! - #[no_access_control] on a function:
 //!     * Marker (no-op) indicating the method is intentionally open (no guard injected).
 //!
@@ -185,13 +193,12 @@ fn take_all_authorized_args(attrs: &mut Vec<Attribute>) -> Vec<AuthorizedArgs> {
 }
 
 fn build_call_path(check_fn: &Path, use_self: bool) -> TokenStream2 {
-    if use_self && check_fn.segments.len() == 1 {
-        let ident = &check_fn.segments[0].ident;
-        quote! { Self::#ident }
-    } else {
-        let p = check_fn;
-        quote! { #p }
+    if use_self {
+        if let Some(ident) = check_fn.get_ident() {
+            return quote! { Self::#ident };
+        }
     }
+    quote! { #check_fn }
 }
 
 fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<syn::Ident> {

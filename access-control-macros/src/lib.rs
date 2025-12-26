@@ -132,9 +132,10 @@ fn instrument_block_multi(
     span: Span,
 ) -> Box<syn::Block> {
     // Iterate through the auth_pairs and build check1(&env, &a1) && check2(&env, &a2) && ...
-    let checks = pairs.iter().map(|(call_path, arg)| {
-        quote! { #call_path(&#env_ident, &#arg) }
-    });
+    let checks: Vec<TokenStream2> = pairs
+        .iter()
+        .map(|(call_path, arg)| quote! { #call_path(&#env_ident, &#arg) })
+        .collect();
 
     // Iterate and build a1.require_auth(); a2.require_auth(); ...
     // Also dedupe calls for require_auth on addresses featuring multiple times in `auths`.
@@ -147,12 +148,21 @@ fn instrument_block_multi(
         }
     });
 
+    // Build a minimal boolean expression:
+    // - empty => true (shouldn’t happen for authorized paths, but keeps code well-formed)
+    // - 1+    => check1 && check2 && ...
+    let checks_expr = if checks.is_empty() {
+        quote! { true }
+    } else {
+        quote! { #(#checks)&&* }
+    };
+
     syn::parse_quote_spanned! { span =>
         {
             // Enforce that the `env` parameter is actually soroban_sdk::Env
             let _: &soroban_sdk::Env = &#env_ident;
 
-            if !(true #(&& (#checks))* ) {
+            if !(#checks_expr) {
                 ::core::panic!("unauthorized: one or more authorization predicates failed");
             }
             #(#auths)*

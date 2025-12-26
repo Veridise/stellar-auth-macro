@@ -332,7 +332,7 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     .any(|a| a.path().is_ident("contractimpl"));
                 let is_public = is_trait_impl
                     || has_contractimpl_attr
-                    || !matches!(m.vis, Visibility::Public(_));
+                    || matches!(m.vis, Visibility::Public(_));
 
                 // Enforce that every public fn is either open or protected
                 if is_public && !(had_authorized || has_no_access) {

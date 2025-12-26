@@ -227,22 +227,6 @@ fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<s
     None
 }
 
-/// Returns true if desired parameter exists within the function signature otherwise emits a warning and returns false.
-fn ensure_param_or_warn(sig: &syn::Signature, fn_name: &syn::Ident, desired: &syn::Ident) -> bool {
-    if param_exists(sig, desired) {
-        return true;
-    }
-
-    emit_warning!(
-        desired.span(),
-        "skipping #[authorized_by]: parameter `{}` not found on `{}` (generated wrapper?)",
-        desired,
-        fn_name
-    );
-
-    false
-}
-
 fn instrument_impl_like_multi(
     sig: &syn::Signature,
     block: &mut syn::Block,
@@ -255,10 +239,19 @@ fn instrument_impl_like_multi(
     }
 
     // Ensure each named param exists; if any missing, skip entirely (warned inside).
-    for args in args_list {
-        if !ensure_param_or_warn(sig, fn_name, &args.arg) {
+    let mut pairs = Vec::with_capacity(args_list.len());
+    for a in args_list {
+        let desired = &a.arg;
+        if !param_exists(sig, desired) {
+            emit_warning!(
+                desired.span(),
+                "skipping #[authorized_by]: parameter `{}` not found on `{}` (generated wrapper?)",
+                desired,
+                fn_name
+            );
             return false;
         }
+        pairs.push((build_call_path(&a.check_fn, use_self), a.arg.clone()));
     }
 
     // Resolve Env once.
@@ -266,12 +259,6 @@ fn instrument_impl_like_multi(
         Some(e) => e,
         None => return false,
     };
-
-    // Build (call_path, arg_ident) pairs.
-    let pairs: Vec<(TokenStream2, syn::Ident)> = args_list
-        .iter()
-        .map(|a| (build_call_path(&a.check_fn, use_self), a.arg.clone()))
-        .collect();
 
     let body = &*block; // borrow before replace
     *block = *instrument_block_multi(body, &pairs, &env_ident, sig.span());

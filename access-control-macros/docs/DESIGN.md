@@ -1,6 +1,6 @@
-## Details
+# Details
 
-### What the macros do (and what code they inject)
+## What the macros do (and what code they inject)
 
 When you tag an `impl` with `#[access_control]`, the macro walks every method in that block and inspects its attributes. For each method marked `#[authorized_by(arg, predicate_path)]`, it rewrites the function by injecting a guard at the very start of the body and then strips the `#[authorized_by(..)]` attribute so downstream macros never see it. Everything else is left as-is unless you add other annotations.
 
@@ -38,7 +38,7 @@ impl MyContract { /* methods */ }
 * With this order, `access_control` instruments your methods **first**, strips `#[authorized_by(..)]`, and hands a clean, already-guarded `impl` to `#[contractimpl]`.
 * If you reverse the order, `contractimpl` might synthesize wrappers and the original `#[authorized_by(..)]` could land on a non-function item. To avoid noisy analyzer errors, the standalone `#[authorized_by]` attribute in this crate is tolerant: if it doesn’t see a function/method shape (or required params), it simply leaves the item unchanged and warns at most. Still, the **recommended** order is `#[access_control]` then `#[contractimpl]`.
 
-### Predicates: what they must look like
+## Predicates: what they must look like
 
 Write your predicate to be **deterministic** and **read-only**: no storage writes, no auth calls, and no non-determinism. The macro expects the signature:
 
@@ -53,7 +53,7 @@ It can be:
 
 Calling `require_auth()` inside the predicate is *not* necessary; the macro injects that **after** the predicate check passes. Typically, predicates should answer only “is this address allowed, given the current on-chain state?”
 
-### External modules are ignored (by design)
+## External modules and pub(crate) Fns are ignored (by design)
 
 `#[access_control]` works on:
 
@@ -62,7 +62,7 @@ Calling `require_auth()` inside the predicate is *not* necessary; the macro inje
 
 If you put it on an **external** module (declared with `mod x;` and defined elsewhere), the macro **cannot** inspect the contents. In that case it raises a hard error. Therefore to use the access control macro, use it directly on the `impl` (or inline the module).
 
-### Macro expansion: Before and After
+## Macro expansion: Before and After
 
 Before:
 
@@ -104,7 +104,7 @@ impl MyContract {
 }
 ```
 
-### Referencing predicates by path
+## Referencing predicates by path
 
 You can point to a predicate outside the `impl` using:
 
@@ -115,11 +115,11 @@ pub fn transfer_fees(env: Env, caller: Address) { /* ... */ }
 
 As long as `crate::auth::is_admin(&Env, &Address) -> bool` exists, the guard will inject cleanly.
 
-### What happens if you forget an annotation?
+## What happens if you forget an annotation?
 
 If a public function in the `impl` has **no** `#[no_access_control]` and **no** `#[authorized_by(..)]`, compilation fails with:
 
-```
+```plaintext
 public method {<name>} is missing #[no_access_control] or #[authorized_by(...)]
 ```
 

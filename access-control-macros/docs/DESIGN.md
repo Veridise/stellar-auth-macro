@@ -38,9 +38,17 @@ impl MyContract { /* methods */ }
 * With this order, `access_control` instruments your methods **first**, strips `#[authorized_by(..)]`, and hands a clean, already-guarded `impl` to `#[contractimpl]`.
 * If you reverse the order, `contractimpl` might synthesize wrappers and the original `#[authorized_by(..)]` could land on a non-function item. To avoid noisy analyzer errors, the standalone `#[authorized_by]` attribute in this crate is tolerant: if it doesn’t see a function/method shape (or required params), it simply leaves the item unchanged and warns at most. Still, the **recommended** order is `#[access_control]` then `#[contractimpl]`.
 
-## Predicates: what they must look like
+## Predicates: recommended shape and behavior
 
-Write your predicate to be **deterministic** and **read-only**: no storage writes, no auth calls, and no non-determinism. The macro expects the signature:
+Predicates must be **pure, deterministic, and read-only**.
+
+They must not:
+
+* Modify contract storage
+* Call `require_auth()`, as the macro already handles that for the concerned addresses
+* Perform non-deterministic operations
+
+The expected predicate signature is:
 
 ```rust
 fn predicate(env: &Env, who: &Address) -> bool
@@ -150,7 +158,7 @@ impl GenericLendingProtocol {
     fn only_owner(env: &Env, who: &Address) -> bool {
         // Owner should be set within an initializer
         let owner: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
-        matches!(owner, Some(ref o) if o == user)
+        matches!(owner, Some(ref o) if o == who)
     }
 }
 ```

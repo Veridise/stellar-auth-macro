@@ -1,6 +1,6 @@
 # Contributing
 
-Open a small PR with a focused change and a matching test. Run formatting locally:
+This package is under active development, and developer contributions are welcome. To contribute to the library, open a small PR with a focused change and a matching test. Before committing, run formatting locally with:
 
 ```bash
 make fmt
@@ -17,7 +17,8 @@ Please keep the macro behavior predictable and the error messages short and acti
 
 ## TODOS
 
-The following improvements/additions to the macro are in the pipeline.
+The following improvements/additions to the macro are in the pipeline. Developers willing to contribute can pick up any of 
+these items to work on.
 
 * Integrate with Open Zeppelin's access control
 * Add support for role based predicates and predicates with different shapes

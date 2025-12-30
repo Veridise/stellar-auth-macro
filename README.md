@@ -1,19 +1,22 @@
 # Advisory
 
-This project is experimental and unaudited. Use at your own risk and review generated code and unit tests before deploying to mainnet.
+This project is experimental and unaudited. Use at your own risk, and review generated code and unit tests before deploying to mainnet.
 
-The security concerns and limitations have been outline in [Limitations](access-control-macros/docs/SECURITY.md#limitations).
+Known limitations and security considerations are documented in the [Limitations](access-control-macros/docs/SECURITY.md#limitations) and
+[Security Considerations](access-control-macros/docs/SECURITY.md#security-considerations) sections.
 
 # Overview
 
 This crate  provides a  **simple, explicit  access-control mechanism**
 for  Stellar/Soroban contracts,  removing the  need for  ad-hoc checks
-scattered throughout  the codebase.  It  was developed and  audited by
-Veridise security experts.
+scattered throughout  the codebase.
 
-## Before applying the crate
+## Before applying the macro
 
-In this version, access control is implicit and easy to overlook.
+In this version, access control is implicit and easy to overlook. Developers must manually ensure that:
+
+* "the caller is **authorized** to perform the action, and"
+* "the caller has actually **signed** the invocation."
 
 ```rust
 #[contractimpl]
@@ -28,11 +31,12 @@ impl MyContract {
 }
 ```
 
-## After applying the crate
+## After applying the macro
 
 After applying this crate, access control becomes explicit and self-documenting.
 Each public function clearly states whether it is unrestricted or protected, and
-under what conditions.
+under what conditions. This also explicitly signals developer intent with each public function,
+making it harder to miss applying access control.
 
 ```rust
 #[access_control]
@@ -64,25 +68,25 @@ impl MyContract {
 
 ## Why this matters
 
-- Developers are protected from accidentally introducing unguarded privileged functions.
-- Access-control mistakes surface at compile time, rather than silently at runtime.
-- Security auditors can reason about the authorization model quickly, with
+* Developers are protected from accidentally introducing unguarded privileged functions.
+* Access-control mistakes surface at compile time, rather than silently at runtime.
+* Security auditors can reason about the authorization model quickly, with
   unconstrained privileged functions standing out immediately via `#[no_access_control]`.
 
 *In short, this crate turns access control from an implicit convention into an
-explicit, enforceable contract.*
+explicit, enforceable policy.*
 
 ## How it works
 
 The macro injects both of the following for every function marked as authorized:
 
-- the authorization predicate check
-- the required `require_auth()` call
+* the authorization predicate check
+* the required `require_auth()` call
 
 The build fails at compile time if any public function in the `impl` block is missing either:
 
-- an authorization `#[authorized_by(user, predicate)]` annotation, or
-- an explicit `#[no_access_control]` marker
+* an authorization `#[authorized_by(user, predicate)]` annotation, or
+* an explicit `#[no_access_control]` marker
 
 ## Usage
 
@@ -103,11 +107,11 @@ use access_control_macros::{access_control, no_access_control, authorized_by};
 ```
 
 Annotate your contract  implementation with `#[access_control]` placed
-above  `#[contractimpl]`. This  order  ensures the  guard code  is
+above `#[contractimpl]`. This  order  ensures the  guard code  is
 injected  before  Soroban  generates  client stubs.
 
-For    each    public   entrypoint,    mark    it    as   open    with
-`#[no_access_control]` - no  guard   injected,  or   protected  with
+For    each    public   entrypoint, either mark it as open with
+`#[no_access_control]` - no  guard injected, or protected  with
 `#[authorized_by(arg,  predicate)]` - the  macro injects  a  predicate
 check and `require_auth()` on the specified argument. See the example
 above.

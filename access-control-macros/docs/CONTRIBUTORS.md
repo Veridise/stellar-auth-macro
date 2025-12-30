@@ -1,6 +1,8 @@
 # Contributing
 
-This package is under active development, and developer contributions are welcome. Some items for future work have been outlined in the [TODOS](./CONTRIBUTORS.md#todos) section. To contribute to the library, open a small PR with a focused change and a matching test. Before committing, run formatting locally with:
+This package is under active development, and contributions are welcome. Planned and potential future work is tracked in the [TODOS](./CONTRIBUTORS.md#todos) section.
+
+To contribute, please open a small, focused pull request with an accompanying test. Before committing, ensure the codebase is properly formatted by running:
 
 ```bash
 make fmt

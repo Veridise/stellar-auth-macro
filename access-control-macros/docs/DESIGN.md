@@ -4,12 +4,17 @@
 
 When you tag an `impl` with `#[access_control]`, the macro walks every method in that block and inspects its attributes. For each method marked `#[authorized_by(arg, predicate_path)]`, it rewrites the function by injecting a guard at the very start of the body and then strips the `#[authorized_by(..)]` attribute so downstream macros never see it. Everything else is left as-is unless you add other annotations.
 
+Note: `#[authorized_by]` is syntax-only unless consumed by `#[access_control]`.
+
 Injected guard (conceptually):
 
 ```rust
 {
+    // Enforce that `env` is actually soroban_sdk::Env
+    let _: &soroban_sdk::Env = &env;
+
     if !(predicate_path(&env, &arg)) {
-        ::core::panic!("unauthorized: predicate_path(env,arg) failed");
+        ::core::panic!("unauthorized: one or more authorization predicates failed");
     }
     arg.require_auth();
     /* original body follows */
@@ -23,7 +28,7 @@ For each public method (public visibility **or** in a trait `impl` **or** inside
 
 If neither is present, the build fails with a clear error telling you which method needs an annotation.
 
-> Having public visibility means the item is declared `pub`, `pub(crate)`, `pub(super)`, or `pub(in …)`, or it appears in a trait `impl`, or the `impl` carries `#[contractimpl]` (which turns methods into external entrypoints).
+> The macro enforces annotations on each public endpoint. Any method in a trait impl, any method in an impl tagged #[contractimpl], or any method declared pub. Methods with restricted visibility like pub(crate), pub(super), or pub(in …) are not enforced (unless the impl is #[contractimpl] or a trait impl). 
 
 ### Recommended attribute order (multiple macros)
 
@@ -35,14 +40,15 @@ Put `#[access_control]` **above** `#[contractimpl]`:
 impl MyContract { /* methods */ }
 ```
 
-* With this order, `access_control` instruments your methods **first**, strips `#[authorized_by(..)]`, and hands a clean, already-guarded `impl` to `#[contractimpl]`.
-* If you reverse the order, `contractimpl` might synthesize wrappers and the original `#[authorized_by(..)]` could land on a non-function item. To avoid noisy analyzer errors, the standalone `#[authorized_by]` attribute in this crate is tolerant: if it doesn’t see a function/method shape (or required params), it simply leaves the item unchanged and warns at most. Still, the **recommended** order is `#[access_control]` then `#[contractimpl]`.
+With this order, `access_control` instruments your methods **first**, strips `#[authorized_by(..)]`, and hands a clean, already-guarded `impl` to `#[contractimpl]`.If you reverse the order, #[contractimpl] may generate wrappers/stubs before #[access_control] runs, and the access-control macro may no longer see or rewrite the original method bodies as intended.
+
+To avoid noisy analyzer errors, the standalone `#[authorized_by]` attribute in this crate is tolerant: if it doesn’t see a function/method shape (or required params), it simply leaves the item unchanged and warns at most. Still, the **recommended** order is `#[access_control]` then `#[contractimpl]`.
 
 ## Predicates: recommended shape and behavior
 
-Predicates must be **pure, deterministic, and read-only**.
+Predicates are expected to be kept **pure, deterministic, and read-only**.
 
-They must not:
+They should not:
 
 * Modify contract storage
 * Call `require_auth()`, as the macro already handles that for the concerned addresses
@@ -61,15 +67,6 @@ It can be:
 
 Calling `require_auth()` inside the predicate is *not* necessary; the macro injects that **after** the predicate check passes. Typically, predicates should answer only “is this address allowed, given the current on-chain state?”
 
-## External modules and pub(crate) Fns are ignored (by design)
-
-`#[access_control]` works on:
-
-* an `impl` block, or
-* an **inline** `mod` (the content is present in the same file).
-
-If you put it on an **external** module (declared with `mod x;` and defined elsewhere), the macro **cannot** inspect the contents. In that case it raises a hard error. Therefore to use the access control macro, use it directly on the `impl` (or inline the module).
-
 ## Macro expansion: Before and After
 
 Before:
@@ -87,7 +84,7 @@ impl MyContract {
     }
 
     // predicate (pure; read-only)
-    fn is_owner(env: &Env, user: &Address) -> bool {
+    fn only_owner(env: &Env, user: &Address) -> bool {
         let owner: Option<Address> = env.storage().persistent().get(&DataKey::Owner);
         matches!(owner, Some(ref o) if o == user)
     }
@@ -101,14 +98,14 @@ impl MyContract {
     pub fn view_balance(env: Env) { /* unchanged */ }
 
     pub fn increment_balance(env: Env, user: Address, n: u32) {
-        if !(Self::is_owner(&env, &user)) {
+        if !(Self::only_owner(&env, &user)) {
             ::core::panic!("unauthorized: only_owner(env,user) failed");
         }
         user.require_auth();
         /* body */
     }
 
-    fn is_owner(env: &Env, user: &Address) -> bool { /* unchanged */ }
+    fn only_owner(env: &Env, user: &Address) -> bool { /* unchanged */ }
 }
 ```
 

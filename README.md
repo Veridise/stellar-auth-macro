@@ -2,7 +2,7 @@
 
 This project is experimental and unaudited. Use at your own risk and review generated code and unit tests before deploying to mainnet.
 
-The security concerns and limitations have been outline in [Limitations](docs/SECURITY.md#limitations).
+The security concerns and limitations have been outline in [Limitations](access-control-macros/docs/SECURITY.md#limitations).
 
 # Overview
 

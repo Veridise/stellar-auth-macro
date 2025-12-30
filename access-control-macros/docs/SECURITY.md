@@ -1,18 +1,12 @@
 # Security considerations
 
-While this macro helps prevent *accidental* access-control omissions, it does not eliminate all security risks. Developers and auditors should be aware of the following considerations.
+While this macro helps prevent *accidental* access-control omissions, it does not eliminate all security risks. Developers and reviewers should be aware of the following considerations.
 
 ## Predicate correctness is critical
 
 Authorization predicates are user-defined and not validated by the macro. A flawed predicate (for example, checking the wrong storage key or using incorrect comparison logic) will still compile and execute.
 
 The macro guarantees *that* a predicate is called, not *that the predicate is correct*.
-
-## State-dependent predicates
-
-Predicates often depend on on-chain state (e.g. owner stored in contract storage). If that state can be modified within the same transaction or reentered through other calls, developers must reason carefully about ordering and reentrancy.
-
-The macro does not enforce reentrancy protection or state immutability.
 
 ### Initialization and front-running
 
@@ -30,7 +24,7 @@ TTL management is explicitly left to the contract author.
 
 The macro only instruments functions within the annotated `impl`. Functions outside this scope, including helpers or generated wrappers, are not protected unless explicitly guarded.
 
-Auditors should verify that all external entrypoints are covered by `#[access_control]`.
+Developers should verify that all external entrypoints are covered by `#[access_control]`.
 
 # Limitations
 
@@ -52,7 +46,7 @@ This macro does not attempt to:
 
 - Verify the correctness of predicate logic
 - Enforce role hierarchies or policy composition
-- Implement direct access control
+- Implement access control primitives itself
 - Prevent misuse of `require_auth()` outside the macro
 
-It is meant to be a **guardrail**, and not a full-fledged security framework.
+It is meant to be a **guardrail**, and not a full-fledged authorization framework.

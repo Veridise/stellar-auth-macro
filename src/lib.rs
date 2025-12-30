@@ -10,7 +10,7 @@ pub enum DataKey {
     Manager, // manager, intended to add as a guard for transferring owner rights
 }
 
-// Methods that we do not want to be public
+// Contract helpers that we do not want to be accessible publicly
 #[contract]
 pub struct IncrementContract;
 
@@ -30,7 +30,7 @@ impl IncrementContract {
 #[access_control]
 #[contractimpl]
 impl IncrementContract {
-    // 1) Constructor to set the owner
+    // constructor to set the owner, can only be called at deployment
     #[no_access_control]
     pub fn __constructor(env: Env, owner: Address) {
         if env.storage().persistent().has(&DataKey::Owner) {

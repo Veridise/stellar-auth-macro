@@ -14,3 +14,6 @@ fmt:
 
 clean:
 	cargo clean
+
+clippy:
+	cargo clippy --all-targets --all-features -- -D warnings

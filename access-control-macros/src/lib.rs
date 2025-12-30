@@ -6,7 +6,16 @@
 //!     * Enforces policy: every public method must have **either** `#[no_access_control]` **or**
 //!       one-or-more `#[authorized_by(..)]`. Mixing both on the same method is an error.
 //!     * Detects “public” as: trait impl methods, `#[contractimpl]` methods, or methods with `pub` visibility.
-//!     * Uses hybrid `Env` resolution (prefer a parameter named `env`, else a unique `Env`-typed param).
+//!     * Uses **strict Env resolution**:
+//!         - The method must have a parameter named exactly `env`.
+//!         - That parameter’s type must be exactly `Env` or `soroban_sdk::Env` (optionally by reference).
+//!         - If this requirement is not met, an error is emitted.
+//!
+//!       **Soroban note:** For `#[contractimpl]` methods, Soroban treats `Env` as the host context,
+//!       and not a normal serializable argument. Contract methods effectively support a single `Env`
+//!       parameter (typically first). Additional `Env` parameters are not supported by the generated
+//!       client interface, and will fail to compile. This macro’s strict `env: Env` requirement
+//!       matches those constraints and avoids accidental instrumentation of the wrong parameter.
 //!
 //! - #[no_access_control] on a function:
 //!     * Marker (no-op) indicating the method is intentionally open (no guard injected).
@@ -54,54 +63,60 @@ impl Parse for AuthorizedArgs {
     }
 }
 
-/// Iterates over the function signature's arguments and returns the "desired" parameter, if it exists.
-fn find_param_ident(sig: &syn::Signature, desired: &str) -> Option<syn::Ident> {
-    sig.inputs.iter().find_map(|arg| match arg {
-        FnArg::Typed(pat_ty) => match &*pat_ty.pat {
-            Pat::Ident(p) if p.ident == desired => Some(p.ident.clone()),
-            _ => None,
-        },
-        FnArg::Receiver(_) => None, // skip for 'self'
+/// Iterates over the function signature's arguments and returns true if it has the "desired" parameter.
+fn has_param(sig: &syn::Signature, desired: &syn::Ident) -> bool {
+    sig.inputs.iter().any(|arg| {
+        matches!(
+            arg,
+            FnArg::Typed(pat_ty)
+                if matches!(&*pat_ty.pat, Pat::Ident(p) if p.ident == *desired)
+        )
     })
 }
 
-/// Return the parameter identifiers whose *spelled* type is `Env` (or `&Env`, or `soroban_sdk::Env`).
-fn env_type_candidates(sig: &syn::Signature) -> Vec<syn::Ident> {
-    let mut out = Vec::new();
-    for arg in &sig.inputs {
-        let FnArg::Typed(pat_ty) = arg else { continue };
+/// Env resolution (strict):
+///  1) The parameter must be named `env`.
+///  2) Its (possibly referenced) type must be exactly `Env` or `soroban_sdk::Env`.
+///  3) If no such parameter is found, return None.
+fn find_env_ident_strict(sig: &syn::Signature) -> Option<syn::Ident> {
+    sig.inputs.iter().find_map(|arg| {
+        let FnArg::Typed(pat_ty) = arg else {
+            return None;
+        };
         let Pat::Ident(pat_ident) = &*pat_ty.pat else {
-            continue;
+            return None;
         };
 
-        // peel references like &Env
+        if pat_ident.ident != "env" {
+            return None;
+        }
+
         let mut ty: &Type = &*pat_ty.ty;
         if let Type::Reference(r) = ty {
             ty = &*r.elem;
         }
-        if let Type::Path(p) = ty {
-            if let Some(seg) = p.path.segments.last() {
-                if seg.ident == "Env" {
-                    out.push(pat_ident.ident.clone());
-                }
-            }
-        }
-    }
-    out
+
+        is_strict_env_type(ty).then(|| pat_ident.ident.clone())
+    })
 }
 
-/// Env resolution:
-///  1) The variable must have name `env`
-///  2) Its type has to be `Env` or `&Env` or `&soroban_sdk::Env`
-/// If no such variable is found, return None
-fn find_env_ident_hybrid(sig: &syn::Signature) -> Option<syn::Ident> {
-    let id = find_param_ident(sig, "env")?;
-    let cands = env_type_candidates(sig);
-
-    if cands.len() == 1 && cands[0] == id {
-        return Some(id);
-    } else {
-        None
+/// Return true only for the exact types `Env` or `soroban_sdk::Env`
+/// (references should be peeled by the caller).
+fn is_strict_env_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(p) => {
+            let segs = &p.path.segments;
+            if segs.len() == 1 {
+                // Env
+                segs[0].ident == "Env"
+            } else if segs.len() == 2 {
+                // soroban_sdk::Env
+                segs[0].ident == "soroban_sdk" && segs[1].ident == "Env"
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
@@ -116,25 +131,26 @@ fn instrument_block_multi(
     span: Span,
 ) -> Box<syn::Block> {
     // Iterate through the auth_pairs and build check1(&env, &a1) && check2(&env, &a2) && ...
-    let checks = pairs.iter().map(|(call_path, arg)| {
-        quote! { #call_path(&#env_ident, &#arg) }
-    });
+    let checks = pairs
+        .iter()
+        .map(|(call_path, arg)| quote! { #call_path(&#env_ident, &#arg) });
+
+    let checks_expr = quote! { true #(&& (#checks))* };
 
     // Iterate and build a1.require_auth(); a2.require_auth(); ...
     // Also dedupe calls for require_auth on addresses featuring multiple times in `auths`.
     let mut seen = BTreeSet::<String>::new();
     let auths = pairs.iter().filter_map(|(_, arg)| {
         let k = arg.to_string();
-        if seen.insert(k) {
-            Some(quote! { #arg.require_auth(); })
-        } else {
-            None
-        }
+        seen.insert(k).then(|| quote! { #arg.require_auth(); })
     });
 
     syn::parse_quote_spanned! { span =>
         {
-            if !(true #(&& (#checks))* ) {
+            // Enforce that the `env` parameter is actually soroban_sdk::Env
+            let _: &soroban_sdk::Env = &#env_ident;
+
+            if !(#checks_expr) {
                 ::core::panic!("unauthorized: one or more authorization predicates failed");
             }
             #(#auths)*
@@ -178,50 +194,25 @@ fn take_all_authorized_args(attrs: &mut Vec<Attribute>) -> Vec<AuthorizedArgs> {
 }
 
 fn build_call_path(check_fn: &Path, use_self: bool) -> TokenStream2 {
-    if use_self && check_fn.segments.len() == 1 {
-        let ident = &check_fn.segments[0].ident;
-        quote! { Self::#ident }
-    } else {
-        let p = check_fn;
-        quote! { #p }
+    if use_self {
+        if let Some(ident) = check_fn.get_ident() {
+            return quote! { Self::#ident };
+        }
     }
+    quote! { #check_fn }
 }
 
 fn get_env_ident_or_warn(sig: &syn::Signature, fn_name: &syn::Ident) -> Option<syn::Ident> {
-    if let Some(id) = find_env_ident_hybrid(sig) {
+    if let Some(id) = find_env_ident_strict(sig) {
         return Some(id);
     }
-    let cands = env_type_candidates(sig);
-    if cands.len() > 1 {
-        emit_warning!(
-            sig.span(),
-            "skipping #[authorized_by]: multiple `Env`-typed parameters on `{}`; \
-             please name the desired one `env`",
-            fn_name
-        );
-    } else {
-        emit_warning!(
-            sig.span(),
-            "skipping #[authorized_by]: no `Env` parameter found on `{}`; leaving unchanged",
-            fn_name
-        );
-    }
-    None
-}
 
-/// Returns true if desired parameter exists within the function signature otherwise emits a warning and returns false.
-fn ensure_param_or_warn(sig: &syn::Signature, fn_name: &syn::Ident, desired: &syn::Ident) -> bool {
-    if find_param_ident(sig, &desired.to_string()).is_some() {
-        return true;
-    }
-    emit_warning!(
-        desired.span(),
-        "skipping #[authorized_by]: parameter `{}` not found on `{}` (generated wrapper?)",
-        desired,
+    emit_error!(
+        fn_name.span(),
+        "skipping #[authorized_by]: `{}` must have a parameter named `env` with type `Env` or `soroban_sdk::Env`",
         fn_name
     );
-
-    false
+    None
 }
 
 fn instrument_impl_like_multi(
@@ -236,10 +227,19 @@ fn instrument_impl_like_multi(
     }
 
     // Ensure each named param exists; if any missing, skip entirely (warned inside).
-    for args in args_list {
-        if !ensure_param_or_warn(sig, fn_name, &args.arg) {
+    let mut pairs = Vec::with_capacity(args_list.len());
+    for a in args_list {
+        let desired = &a.arg;
+        if !has_param(sig, desired) {
+            emit_warning!(
+                desired.span(),
+                "skipping #[authorized_by]: parameter `{}` not found on `{}` (generated wrapper?)",
+                desired,
+                fn_name
+            );
             return false;
         }
+        pairs.push((build_call_path(&a.check_fn, use_self), a.arg.clone()));
     }
 
     // Resolve Env once.
@@ -247,12 +247,6 @@ fn instrument_impl_like_multi(
         Some(e) => e,
         None => return false,
     };
-
-    // Build (call_path, arg_ident) pairs.
-    let pairs: Vec<(TokenStream2, syn::Ident)> = args_list
-        .iter()
-        .map(|a| (build_call_path(&a.check_fn, use_self), a.arg.clone()))
-        .collect();
 
     let body = &*block; // borrow before replace
     *block = *instrument_block_multi(body, &pairs, &env_ident, sig.span());
@@ -313,7 +307,7 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     .any(|a| a.path().is_ident("contractimpl"));
                 let is_public = is_trait_impl
                     || has_contractimpl_attr
-                    || !matches!(m.vis, Visibility::Inherited);
+                    || matches!(m.vis, Visibility::Public(_));
 
                 // Enforce that every public fn is either open or protected
                 if is_public && !(had_authorized || has_no_access) {
@@ -326,7 +320,9 @@ pub fn access_control(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
         abort_if_dirty();
-        return TokenStream::from(quote!(#impl_block));
+        return TokenStream::from(quote! {
+            #impl_block
+        });
     }
 
     abort!(

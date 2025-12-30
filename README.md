@@ -66,6 +66,9 @@ impl MyContract {
 }
 ```
 
+> Predicates are expected to be pure, deterministic, and read-only.
+> See the [Predicate design guidelines](access-control-macros/docs/DESIGN.md#predicates-recommended-shape-and-behavior) for details.
+
 ## Why this matters
 
 * Developers are protected from accidentally introducing unguarded privileged functions.
